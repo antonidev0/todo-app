@@ -4,6 +4,7 @@ import android.content.Context
 import com.example.todo_app.data.AppDatabase
 import com.example.todo_app.data.RoomTransactor
 import com.example.todo_app.data.TaskRepository
+import com.example.todo_app.data.PrefsTeamStore
 import com.example.todo_app.data.TeamStore
 import com.example.todo_app.reminders.ReminderScheduler
 
@@ -23,7 +24,7 @@ class AppContainer(context: Context) {
         TaskRepository(database.taskDao(), RoomTransactor(database), reminderScheduler)
     }
 
-    val teamStore: TeamStore by lazy { TeamStore(appContext) }
+    val teamStore: TeamStore by lazy { PrefsTeamStore(appContext) }
 }
 
 /** Atajo para llegar al contenedor desde un receiver o una actividad. */

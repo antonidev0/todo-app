@@ -5,11 +5,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** Guarda los nombres del equipo para no tener que escribirlos cada vez. */
-class TeamStore(context: Context) {
+interface TeamStore {
+    suspend fun load(): List<String>
+    fun save(names: List<String>)
+}
+
+/** [TeamStore] sobre SharedPreferences. */
+class PrefsTeamStore(context: Context) : TeamStore {
     private val prefs by lazy { context.getSharedPreferences("equipo", Context.MODE_PRIVATE) }
 
     /** Lee del disco, así que se hace fuera del hilo principal. */
-    suspend fun load(): List<String> = withContext(Dispatchers.IO) {
+    override suspend fun load(): List<String> = withContext(Dispatchers.IO) {
         prefs.getString(KEY, null)
             ?.split("\n")
             ?.map { it.trim() }
@@ -17,7 +23,7 @@ class TeamStore(context: Context) {
             ?: emptyList()
     }
 
-    fun save(names: List<String>) {
+    override fun save(names: List<String>) {
         // apply() escribe en segundo plano.
         prefs.edit().putString(KEY, names.joinToString("\n")).apply()
     }
