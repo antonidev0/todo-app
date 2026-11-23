@@ -16,23 +16,25 @@ class TaskRepository(context: Context) {
 
     fun observeTask(id: String): Flow<Task?> = dao.observeTask(id)
 
-    suspend fun addTask(parentId: String?, title: String, reminderAt: Long?, repeatDays: Int) {
+    suspend fun addTask(parentId: String?, title: String, reminderAt: Long?, repeatDays: Int, minutes: Int?) {
         val task = Task(
             parentId = parentId,
             title = title.trim(),
             reminderAt = reminderAt,
             repeatDays = if (reminderAt == null) 0 else repeatDays,
+            minutes = minutes,
             position = dao.nextPosition(parentId),
         )
         dao.insert(task)
         scheduler.schedule(task)
     }
 
-    suspend fun editTask(task: Task, title: String, reminderAt: Long?, repeatDays: Int) {
+    suspend fun editTask(task: Task, title: String, reminderAt: Long?, repeatDays: Int, minutes: Int?) {
         val updated = task.copy(
             title = title.trim(),
             reminderAt = reminderAt,
             repeatDays = if (reminderAt == null) 0 else repeatDays,
+            minutes = minutes,
             updatedAt = System.currentTimeMillis(),
         )
         dao.update(updated)
@@ -67,8 +69,24 @@ class TaskRepository(context: Context) {
             updatedAt = now,
         )
         dao.update(updated)
+        // Por ejemplo "Cierre del viernes": cada semana sus subtareas vuelven a empezar.
+        dao.markPending(dao.getSubtreeIds(task.id) - task.id, now)
         scheduler.schedule(updated)
         return updated
+    }
+
+    /**
+     * Reparte las subtareas pendientes de [parentId] entre [people] y guarda a quién
+     * le toca cada una. Devuelve el reparto para mostrarlo o compartirlo.
+     */
+    suspend fun splitSubtasks(parentId: String, people: List<String>): List<Splitter.Share> {
+        val items = dao.getPendingChildren(parentId).map {
+            Splitter.Item(it.id, it.title, it.minutes ?: Splitter.DEFAULT_MINUTES)
+        }
+        val shares = Splitter.split(items, people)
+        val now = System.currentTimeMillis()
+        shares.forEach { share -> share.items.forEach { dao.setAssignee(it.id, share.person, now) } }
+        return shares
     }
 
     /** Borra la tarea y todas sus subtareas. */

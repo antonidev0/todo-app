@@ -38,6 +38,10 @@ data class Task(
      * domingo = 64. 0 = no se repite. Ver [Recurrence].
      */
     @ColumnInfo(defaultValue = "0") val repeatDays: Int = 0,
+    /** Minutos que se calcula que lleva la tarea (para repartir el trabajo), o null. */
+    val minutes: Int? = null,
+    /** Persona que tiene que hacerla, o null si no está asignada. */
+    val assignee: String? = null,
     val position: Int = 0,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
