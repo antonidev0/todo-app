@@ -3,9 +3,11 @@ package com.example.todo_app.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.todo_app.data.Splitter
 import com.example.todo_app.data.Task
 import com.example.todo_app.data.TaskRepository
 import com.example.todo_app.data.TaskWithCounts
+import com.example.todo_app.data.TeamStore
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -48,15 +50,44 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
         path.value = path.value.dropLast(1)
     }
 
-    fun add(title: String, reminderAt: Long?, repeatDays: Int) {
+    fun add(title: String, reminderAt: Long?, repeatDays: Int, minutes: Int?) {
         if (title.isBlank()) return
         val parentId = path.value.lastOrNull()
-        viewModelScope.launch { repo.addTask(parentId, title, reminderAt, repeatDays) }
+        viewModelScope.launch { repo.addTask(parentId, title, reminderAt, repeatDays, minutes) }
     }
 
-    fun edit(task: Task, title: String, reminderAt: Long?, repeatDays: Int) {
+    fun edit(task: Task, title: String, reminderAt: Long?, repeatDays: Int, minutes: Int?) {
         if (title.isBlank()) return
-        viewModelScope.launch { repo.editTask(task, title, reminderAt, repeatDays) }
+        viewModelScope.launch { repo.editTask(task, title, reminderAt, repeatDays, minutes) }
+    }
+
+    // ---- Repartir el trabajo entre el equipo ----
+
+    private val teamStore = TeamStore(app)
+
+    /** Nombres guardados del equipo. */
+    private val _team = MutableStateFlow(teamStore.load())
+    val team: StateFlow<List<String>> = _team.asStateFlow()
+
+    /** Último reparto hecho, para enseñarlo en pantalla (null = nada que enseñar). */
+    private val _split = MutableStateFlow<List<Splitter.Share>?>(null)
+    val split: StateFlow<List<Splitter.Share>?> = _split.asStateFlow()
+
+    fun saveTeam(names: List<String>) {
+        val clean = names.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        teamStore.save(clean)
+        _team.value = clean
+    }
+
+    /** Reparte las subtareas de la tarea abierta entre [people]. */
+    fun splitWork(people: List<String>) {
+        val parentId = path.value.lastOrNull() ?: return
+        if (people.isEmpty()) return
+        viewModelScope.launch { _split.value = repo.splitSubtasks(parentId, people) }
+    }
+
+    fun closeSplit() {
+        _split.value = null
     }
 
     fun toggleDone(task: Task) {

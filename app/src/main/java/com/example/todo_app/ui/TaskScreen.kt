@@ -2,6 +2,7 @@ package com.example.todo_app.ui
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -17,7 +18,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
@@ -40,11 +44,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.todo_app.data.Recurrence
+import com.example.todo_app.data.Splitter
 import com.example.todo_app.data.Task
 import com.example.todo_app.data.TaskWithCounts
 import java.time.DayOfWeek
@@ -64,6 +70,9 @@ fun TaskScreen(vm: TaskViewModel, topBanner: @Composable () -> Unit = {}) {
     // null = cerrado; Task vacía (id "") = nueva; otra = editar.
     var editing by remember { mutableStateOf<Task?>(null) }
     var toDelete by remember { mutableStateOf<Task?>(null) }
+    var choosingTeam by remember { mutableStateOf(false) }
+    val team by vm.team.collectAsStateWithLifecycle()
+    val split by vm.split.collectAsStateWithLifecycle()
 
     BackHandler(enabled = canGoBack) { vm.goBack() }
 
@@ -80,6 +89,11 @@ fun TaskScreen(vm: TaskViewModel, topBanner: @Composable () -> Unit = {}) {
                 navigationIcon = {
                     if (canGoBack) {
                         TextButton(onClick = { vm.goBack() }) { Text("‹ Atrás") }
+                    }
+                },
+                actions = {
+                    if (canGoBack && tasks.any { !it.task.done }) {
+                        TextButton(onClick = { choosingTeam = true }) { Text("👥 Repartir") }
                     }
                 },
             )
@@ -129,12 +143,33 @@ fun TaskScreen(vm: TaskViewModel, topBanner: @Composable () -> Unit = {}) {
             initialTitle = task.title,
             initialReminder = task.reminderAt,
             initialRepeatDays = task.repeatDays,
+            initialMinutes = task.minutes,
             onDismiss = { editing = null },
-            onSave = { title, reminderAt, repeatDays ->
-                if (isNew) vm.add(title, reminderAt, repeatDays)
-                else vm.edit(task, title, reminderAt, repeatDays)
+            onSave = { title, reminderAt, repeatDays, minutes ->
+                if (isNew) vm.add(title, reminderAt, repeatDays, minutes)
+                else vm.edit(task, title, reminderAt, repeatDays, minutes)
                 editing = null
             },
+        )
+    }
+
+    if (choosingTeam) {
+        TeamDialog(
+            savedNames = team,
+            onDismiss = { choosingTeam = false },
+            onSplit = { allNames, present ->
+                vm.saveTeam(allNames)
+                vm.splitWork(present)
+                choosingTeam = false
+            },
+        )
+    }
+
+    split?.let { shares ->
+        SplitResultDialog(
+            title = current?.title ?: "Tareas",
+            shares = shares,
+            onDismiss = { vm.closeSplit() },
         )
     }
 
@@ -183,6 +218,8 @@ private fun TaskRow(
                 else MaterialTheme.colorScheme.onSurface,
             )
             val details = buildList {
+                task.assignee?.let { add("👤 $it") }
+                task.minutes?.let { add("⏱ $it min") }
                 if (item.childCount > 0) add("${item.doneChildCount}/${item.childCount} subtareas")
                 val at = task.reminderAt
                 when {
@@ -220,13 +257,15 @@ private fun TaskDialog(
     initialTitle: String,
     initialReminder: Long?,
     initialRepeatDays: Int,
+    initialMinutes: Int?,
     onDismiss: () -> Unit,
-    onSave: (String, Long?, Int) -> Unit,
+    onSave: (String, Long?, Int, Int?) -> Unit,
 ) {
     val context = LocalContext.current
     var title by remember { mutableStateOf(initialTitle) }
     var reminderAt by remember { mutableStateOf(initialReminder) }
     var repeatDays by remember { mutableStateOf(initialRepeatDays) }
+    var minutesText by remember { mutableStateOf(initialMinutes?.toString() ?: "") }
 
     fun currentTime(): LocalDateTime = reminderAt?.let {
         LocalDateTime.ofInstant(Instant.ofEpochMilli(it), ZoneId.systemDefault())
@@ -287,12 +326,23 @@ private fun TaskDialog(
         onDismissRequest = onDismiss,
         title = { Text(heading) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            ) {
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
                     label = { Text("¿Qué tienes que hacer?") },
                     singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = minutesText,
+                    onValueChange = { new -> minutesText = new.filter { it.isDigit() }.take(4) },
+                    label = { Text("Minutos que lleva (opcional)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth(),
                 )
 
@@ -347,7 +397,14 @@ private fun TaskDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onSave(title, reminderAt, if (reminderAt == null) 0 else repeatDays) },
+                onClick = {
+                    onSave(
+                        title,
+                        reminderAt,
+                        if (reminderAt == null) 0 else repeatDays,
+                        minutesText.toIntOrNull()?.takeIf { it > 0 },
+                    )
+                },
                 enabled = title.isNotBlank(),
             ) {
                 Text("Guardar")
@@ -372,6 +429,133 @@ private fun DayToggle(letter: String, selected: Boolean, onClick: () -> Unit) {
             Text(letter, style = MaterialTheme.typography.labelLarge)
         }
     }
+}
+
+/**
+ * Elegir quién está hoy. Los nombres se guardan para la próxima vez;
+ * marcas solo a los que estáis trabajando ahora.
+ */
+@Composable
+private fun TeamDialog(
+    savedNames: List<String>,
+    onDismiss: () -> Unit,
+    onSplit: (allNames: List<String>, present: List<String>) -> Unit,
+) {
+    var names by remember { mutableStateOf(savedNames) }
+    var present by remember { mutableStateOf(savedNames.toSet()) }
+    var newName by remember { mutableStateOf("") }
+
+    fun addName() {
+        val name = newName.trim()
+        if (name.isEmpty()) return
+        if (name !in names) names = names + name
+        present = present + name
+        newName = ""
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("¿Quién está hoy?") },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            ) {
+                if (names.isEmpty()) {
+                    Text(
+                        "Añade los nombres del equipo, tú incluido. Se guardan para la próxima vez.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                names.forEach { name ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = name in present,
+                            onCheckedChange = { on -> present = if (on) present + name else present - name },
+                        )
+                        Text(name, modifier = Modifier.weight(1f))
+                        TextButton(onClick = { names = names - name; present = present - name }) { Text("✕") }
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = newName,
+                        onValueChange = { newName = it },
+                        label = { Text("Nombre") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { addName() }, enabled = newName.isNotBlank()) { Text("Añadir") }
+                }
+                Text(
+                    "Las tareas sin minutos cuentan como ${Splitter.DEFAULT_MINUTES} min.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSplit(names, names.filter { it in present }) },
+                enabled = names.any { it in present },
+            ) {
+                Text("Repartir (${names.count { it in present }})")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
+        },
+    )
+}
+
+/** Muestra quién hace qué, con un botón para mandarlo al grupo. */
+@Composable
+private fun SplitResultDialog(
+    title: String,
+    shares: List<Splitter.Share>,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val longest = shares.maxOfOrNull { it.totalMinutes } ?: 0
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Reparto") },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            ) {
+                Text("Terminaréis en unos $longest min.", style = MaterialTheme.typography.bodyMedium)
+                shares.forEach { share ->
+                    Column {
+                        Text(
+                            "👤 ${share.person} · ${share.totalMinutes} min",
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        if (share.items.isEmpty()) {
+                            Text("   Nada asignado: ayuda a quien vaya más lento", style = MaterialTheme.typography.bodySmall)
+                        }
+                        share.items.forEach { item ->
+                            Text("   • ${item.title} (${item.minutes} min)", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, Splitter.message(title, shares))
+                }
+                context.startActivity(Intent.createChooser(send, "Compartir reparto"))
+            }) { Text("Compartir") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cerrar") }
+        },
+    )
 }
 
 private val reminderFormat = DateTimeFormatter.ofPattern("EEE d MMM, HH:mm", Locale.forLanguageTag("es-ES"))

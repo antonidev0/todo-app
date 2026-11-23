@@ -55,6 +55,23 @@ interface TaskDao {
     )
     suspend fun getActiveReminders(now: Long): List<Task>
 
+    /** Hijos directos pendientes de [parentId], en el orden de la lista. */
+    @Query(
+        """
+        SELECT * FROM tasks
+        WHERE parentId = :parentId AND deletedAt IS NULL AND done = 0
+        ORDER BY reminderAt IS NULL, reminderAt ASC, position ASC, createdAt ASC
+        """
+    )
+    suspend fun getPendingChildren(parentId: String): List<Task>
+
+    @Query("UPDATE tasks SET assignee = :assignee, updatedAt = :now WHERE id = :id")
+    suspend fun setAssignee(id: String, assignee: String?, now: Long)
+
+    /** Vuelve a dejar pendientes las tareas [ids]. */
+    @Query("UPDATE tasks SET done = 0, completedAt = NULL, updatedAt = :now WHERE done = 1 AND id IN (:ids)")
+    suspend fun markPending(ids: List<String>, now: Long)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(task: Task)
 
