@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import androidx.core.app.NotificationManagerCompat
 import com.example.todo_app.data.Task
 
 /**
@@ -44,6 +45,11 @@ class ReminderScheduler(private val context: Context) {
 
     fun cancelFollowUp(taskId: String) {
         alarmManager.cancel(followUpIntent(taskId, askAgain = false))
+    }
+
+    /** Quita la notificación de [taskId] si se está mostrando. */
+    fun cancelNotification(taskId: String) {
+        NotificationManagerCompat.from(context).cancel(requestCode(taskId))
     }
 
     private fun setAlarm(at: Long, pending: PendingIntent) {

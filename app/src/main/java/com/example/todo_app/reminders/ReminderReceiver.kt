@@ -1,7 +1,6 @@
 package com.example.todo_app.reminders
 
 import android.Manifest
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -43,7 +42,6 @@ class ReminderReceiver : BroadcastReceiver() {
     private suspend fun handle(context: Context, intent: Intent, taskId: String) {
         val repo = TaskRepository(context)
         val scheduler = ReminderScheduler(context)
-        val notifications = context.getSystemService(NotificationManager::class.java)
 
         when (intent.action) {
             ACTION_SHOW -> {
@@ -51,7 +49,7 @@ class ReminderReceiver : BroadcastReceiver() {
                 if (task.deletedAt != null) return
                 if (task.repeatDays != 0) {
                     // Nueva vez de una tarea que se repite: vuelve a estar pendiente.
-                    task = repo.startNextOccurrence(task)
+                    task = repo.startNextOccurrence(taskId) ?: return
                 } else if (task.done) {
                     return
                 }
@@ -69,13 +67,13 @@ class ReminderReceiver : BroadcastReceiver() {
             }
 
             ACTION_SNOOZE -> {
-                notifications.cancel(ReminderScheduler.requestCode(taskId))
+                scheduler.cancelNotification(taskId)
                 scheduler.scheduleFollowUp(taskId, SNOOZE_MINUTES, askAgain = true)
             }
 
             ACTION_DONE -> {
+                // setDone también quita la notificación.
                 repo.setDone(taskId, true)
-                notifications.cancel(ReminderScheduler.requestCode(taskId))
             }
         }
     }
