@@ -58,7 +58,7 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
 
     fun edit(task: Task, title: String, reminderAt: Long?, repeatDays: Int, minutes: Int?) {
         if (title.isBlank()) return
-        viewModelScope.launch { repo.editTask(task, title, reminderAt, repeatDays, minutes) }
+        viewModelScope.launch { repo.editTask(task.id, title, reminderAt, repeatDays, minutes) }
     }
 
     // ---- Repartir el trabajo entre el equipo ----

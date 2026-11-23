@@ -1,15 +1,21 @@
 package com.example.todo_app.data
 
 import android.content.Context
+import androidx.room.withTransaction
 import com.example.todo_app.reminders.ReminderScheduler
 import kotlinx.coroutines.flow.Flow
 
 /**
  * Único punto de entrada a las tareas. Se encarga también de programar o cancelar
  * los recordatorios cuando una tarea cambia.
+ *
+ * Las operaciones que escriben varias filas van dentro de una transacción: o se
+ * guardan todas o ninguna, y la lista de la pantalla se actualiza una sola vez.
+ * Las alarmas se programan después, cuando los datos ya están guardados.
  */
 class TaskRepository(context: Context) {
-    private val dao = AppDatabase.get(context).taskDao()
+    private val db = AppDatabase.get(context)
+    private val dao = db.taskDao()
     private val scheduler = ReminderScheduler(context.applicationContext)
 
     fun observeChildren(parentId: String?): Flow<List<TaskWithCounts>> = dao.observeChildren(parentId)
@@ -17,40 +23,52 @@ class TaskRepository(context: Context) {
     fun observeTask(id: String): Flow<Task?> = dao.observeTask(id)
 
     suspend fun addTask(parentId: String?, title: String, reminderAt: Long?, repeatDays: Int, minutes: Int?) {
-        val task = Task(
-            parentId = parentId,
-            title = title.trim(),
-            reminderAt = reminderAt,
-            repeatDays = if (reminderAt == null) 0 else repeatDays,
-            minutes = minutes,
-            position = dao.nextPosition(parentId),
-        )
-        dao.insert(task)
+        val task = db.withTransaction {
+            Task(
+                parentId = parentId,
+                title = title.trim(),
+                reminderAt = reminderAt,
+                repeatDays = if (reminderAt == null) 0 else repeatDays,
+                minutes = minutes,
+                position = dao.nextPosition(parentId),
+            ).also { dao.insert(it) }
+        }
         scheduler.schedule(task)
     }
 
-    suspend fun editTask(task: Task, title: String, reminderAt: Long?, repeatDays: Int, minutes: Int?) {
-        val updated = task.copy(
-            title = title.trim(),
-            reminderAt = reminderAt,
-            repeatDays = if (reminderAt == null) 0 else repeatDays,
-            minutes = minutes,
-            updatedAt = System.currentTimeMillis(),
-        )
-        dao.update(updated)
+    /**
+     * Cambia solo los campos del formulario. Se lee la tarea guardada en ese momento
+     * para no pisar lo que haya cambiado mientras el diálogo estaba abierto (por
+     * ejemplo, si se marcó como hecha desde la notificación o se repartió).
+     */
+    suspend fun editTask(taskId: String, title: String, reminderAt: Long?, repeatDays: Int, minutes: Int?) {
+        val updated = db.withTransaction {
+            val current = dao.getTask(taskId) ?: return@withTransaction null
+            current.copy(
+                title = title.trim(),
+                reminderAt = reminderAt,
+                repeatDays = if (reminderAt == null) 0 else repeatDays,
+                minutes = minutes,
+                updatedAt = System.currentTimeMillis(),
+            ).also { dao.update(it) }
+        } ?: return
         scheduler.schedule(updated)
     }
 
     suspend fun setDone(taskId: String, done: Boolean) {
-        val task = dao.getTask(taskId) ?: return
-        val now = System.currentTimeMillis()
-        val updated = task.copy(
-            done = done,
-            completedAt = if (done) now else null,
-            updatedAt = now,
-        )
-        dao.update(updated)
-        if (done) scheduler.cancelFollowUp(taskId)
+        val updated = db.withTransaction {
+            val task = dao.getTask(taskId) ?: return@withTransaction null
+            val now = System.currentTimeMillis()
+            task.copy(
+                done = done,
+                completedAt = if (done) now else null,
+                updatedAt = now,
+            ).also { dao.update(it) }
+        } ?: return
+        if (done) {
+            scheduler.cancelFollowUp(taskId)
+            scheduler.cancelNotification(taskId)
+        }
         // Si es de una vez y está hecha, esto cancela el recordatorio.
         // Si se repite, deja programada la próxima vez.
         scheduler.schedule(updated)
@@ -58,19 +76,23 @@ class TaskRepository(context: Context) {
 
     /**
      * Ha llegado la hora de una tarea que se repite: vuelve a estar pendiente y su
-     * recordatorio pasa a la próxima vez que toque.
+     * recordatorio pasa a la próxima vez que toque. Devuelve null si la tarea ya no existe.
      */
-    suspend fun startNextOccurrence(task: Task): Task {
-        val now = System.currentTimeMillis()
-        val updated = task.copy(
-            done = false,
-            completedAt = null,
-            reminderAt = Recurrence.nextFor(task, now) ?: task.reminderAt,
-            updatedAt = now,
-        )
-        dao.update(updated)
-        // Por ejemplo "Cierre del viernes": cada semana sus subtareas vuelven a empezar.
-        dao.markPending(dao.getSubtreeIds(task.id) - task.id, now)
+    suspend fun startNextOccurrence(taskId: String): Task? {
+        val updated = db.withTransaction {
+            val task = dao.getTask(taskId) ?: return@withTransaction null
+            val now = System.currentTimeMillis()
+            val next = task.copy(
+                done = false,
+                completedAt = null,
+                reminderAt = Recurrence.nextFor(task, now) ?: task.reminderAt,
+                updatedAt = now,
+            )
+            dao.update(next)
+            // Por ejemplo "Cierre del viernes": cada semana sus subtareas vuelven a empezar.
+            dao.markPending(dao.getSubtreeIds(taskId) - taskId, now)
+            next
+        } ?: return null
         scheduler.schedule(updated)
         return updated
     }
@@ -79,24 +101,27 @@ class TaskRepository(context: Context) {
      * Reparte las subtareas pendientes de [parentId] entre [people] y guarda a quién
      * le toca cada una. Devuelve el reparto para mostrarlo o compartirlo.
      */
-    suspend fun splitSubtasks(parentId: String, people: List<String>): List<Splitter.Share> {
-        val items = dao.getPendingChildren(parentId).map {
-            Splitter.Item(it.id, it.title, it.minutes ?: Splitter.DEFAULT_MINUTES)
+    suspend fun splitSubtasks(parentId: String, people: List<String>): List<Splitter.Share> =
+        db.withTransaction {
+            val items = dao.getPendingChildren(parentId).map {
+                Splitter.Item(it.id, it.title, it.minutes ?: Splitter.DEFAULT_MINUTES)
+            }
+            val shares = Splitter.split(items, people)
+            val now = System.currentTimeMillis()
+            shares.forEach { share -> share.items.forEach { dao.setAssignee(it.id, share.person, now) } }
+            shares
         }
-        val shares = Splitter.split(items, people)
-        val now = System.currentTimeMillis()
-        shares.forEach { share -> share.items.forEach { dao.setAssignee(it.id, share.person, now) } }
-        return shares
-    }
 
     /** Borra la tarea y todas sus subtareas. */
     suspend fun deleteTask(taskId: String) {
-        val ids = dao.getSubtreeIds(taskId)
+        val ids = db.withTransaction {
+            dao.getSubtreeIds(taskId).also { dao.markDeleted(it, System.currentTimeMillis()) }
+        }
         ids.forEach {
             scheduler.cancel(it)
             scheduler.cancelFollowUp(it)
+            scheduler.cancelNotification(it)
         }
-        dao.markDeleted(ids, System.currentTimeMillis())
     }
 
     /** Vuelve a programar todos los recordatorios (tras reiniciar el móvil). */
