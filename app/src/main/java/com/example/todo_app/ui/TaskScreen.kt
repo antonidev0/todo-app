@@ -32,11 +32,14 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,10 +76,21 @@ fun TaskScreen(vm: TaskViewModel, topBanner: @Composable () -> Unit = {}) {
     var choosingTeam by remember { mutableStateOf(false) }
     val team by vm.team.collectAsStateWithLifecycle()
     val split by vm.split.collectAsStateWithLifecycle()
+    val error by vm.error.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+
+    // Enseña cada error una vez y después lo da por visto.
+    LaunchedEffect(error) {
+        error?.let {
+            snackbar.showSnackbar(it)
+            vm.errorShown()
+        }
+    }
 
     BackHandler(enabled = canGoBack) { vm.goBack() }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = {

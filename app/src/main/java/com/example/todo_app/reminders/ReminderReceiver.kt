@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -14,6 +15,7 @@ import com.example.todo_app.MainActivity
 import com.example.todo_app.R
 import com.example.todo_app.data.Task
 import com.example.todo_app.appContainer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -33,6 +35,11 @@ class ReminderReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 handle(context, intent, taskId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Sin esto, un fallo de la base de datos cerraría la app en segundo plano.
+                Log.e(TAG, "No se pudo procesar ${intent.action} de la tarea $taskId", e)
             } finally {
                 pending.finish()
             }
@@ -125,6 +132,8 @@ class ReminderReceiver : BroadcastReceiver() {
         )
 
     companion object {
+        private const val TAG = "ReminderReceiver"
+
         const val ACTION_SHOW = "com.example.todo_app.SHOW_REMINDER"
         const val ACTION_FOLLOW_UP = "com.example.todo_app.FOLLOW_UP"
         const val ACTION_SNOOZE = "com.example.todo_app.SNOOZE"
