@@ -3,6 +3,9 @@ package com.example.todo_app
 import android.content.Context
 import com.anthropic.client.okhttp.AnthropicOkHttpClient
 import com.example.todo_app.assistant.ApiKeyStore
+import com.example.todo_app.assistant.Assistant
+import com.example.todo_app.assistant.GeminiAssistant
+import com.example.todo_app.assistant.Provider
 import com.example.todo_app.assistant.AssistantModel
 import com.example.todo_app.assistant.ClaudeAssistant
 import com.example.todo_app.assistant.PrefsApiKeyStore
@@ -34,12 +37,15 @@ class AppContainer(context: Context) {
 
     val apiKeyStore: ApiKeyStore by lazy { PrefsApiKeyStore(appContext) }
 
-    /** Un asistente nuevo que habla con Claude usando [apiKey] y [model]. */
-    fun newAssistant(apiKey: String, model: AssistantModel): ClaudeAssistant = ClaudeAssistant(
-        AnthropicOkHttpClient.builder().apiKey(apiKey).build(),
-        TaskTools(taskRepository),
-        model,
-    )
+    /** Un asistente nuevo con [model], usando [apiKey] de su proveedor. */
+    fun newAssistant(apiKey: String, model: AssistantModel): Assistant = when (model.provider) {
+        Provider.GEMINI -> GeminiAssistant(apiKey, TaskTools(taskRepository), model)
+        Provider.CLAUDE -> ClaudeAssistant(
+            AnthropicOkHttpClient.builder().apiKey(apiKey).build(),
+            TaskTools(taskRepository),
+            model,
+        )
+    }
 }
 
 /** Atajo para llegar al contenedor desde un receiver o una actividad. */

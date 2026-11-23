@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -54,6 +56,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.todo_app.assistant.AssistantModel
 import com.example.todo_app.assistant.AssistantUiState
+import com.example.todo_app.assistant.Provider
 import com.example.todo_app.assistant.AssistantViewModel
 import com.example.todo_app.assistant.ChatLine
 import java.util.Locale
@@ -117,10 +120,8 @@ fun AssistantDialog(onDismiss: () -> Unit, onError: (String) -> Unit) {
             onSaveKey = vm::saveKey,
             onRemoveKey = vm::removeKey,
             onChooseModel = vm::chooseModel,
-            onOpenConsole = {
-                runCatching {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://console.anthropic.com/settings/keys")))
-                }
+            onOpenUrl = { url ->
+                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
             },
         )
     }
@@ -137,7 +138,7 @@ internal fun AssistantContent(
     onNewConversation: () -> Unit,
     onSaveKey: (String) -> Unit,
     onRemoveKey: () -> Unit,
-    onOpenConsole: () -> Unit,
+    onOpenUrl: (String) -> Unit,
     onChooseModel: (AssistantModel) -> Unit,
 ) {
     var showSettings by rememberSaveable { mutableStateOf(false) }
@@ -159,7 +160,7 @@ internal fun AssistantContent(
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
             when {
-                !state.hasKey -> KeySetup(onSaveKey, onOpenConsole)
+                !state.hasKey -> KeySetup(state.model, onChooseModel, onSaveKey, onOpenUrl)
                 showSettings -> Settings(
                     model = state.model,
                     onChooseModel = onChooseModel,
@@ -241,15 +242,49 @@ private fun Bubble(line: ChatLine) {
     }
 }
 
+/** Lista para elegir el modelo; los de Gemini son gratis. */
 @Composable
-private fun KeySetup(onSaveKey: (String) -> Unit, onOpenConsole: () -> Unit) {
-    var key by rememberSaveable { mutableStateOf("") }
-    Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Conectar con Claude", style = MaterialTheme.typography.titleLarge)
+private fun ModelPicker(model: AssistantModel, onChooseModel: (AssistantModel) -> Unit) {
+    Text("Modelo", style = MaterialTheme.typography.titleMedium)
+    AssistantModel.entries.forEach { option ->
+        Row(
+            Modifier.fillMaxWidth().selectable(selected = option == model, onClick = { onChooseModel(option) }),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RadioButton(selected = option == model, onClick = { onChooseModel(option) })
+            Column(Modifier.padding(start = 8.dp)) {
+                Text(option.label, style = MaterialTheme.typography.bodyLarge)
+                Text(option.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun KeySetup(
+    model: AssistantModel,
+    onChooseModel: (AssistantModel) -> Unit,
+    onSaveKey: (String) -> Unit,
+    onOpenUrl: (String) -> Unit,
+) {
+    var key by rememberSaveable(model.provider) { mutableStateOf("") }
+    val provider = model.provider
+    Column(
+        Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        ModelPicker(model, onChooseModel)
+        Text("Conectar con ${provider.label}", style = MaterialTheme.typography.titleLarge)
         Text(
-            "El asistente usa Claude por internet. Necesitas una clave de API de Anthropic: " +
-                "créala en console.anthropic.com (Settings → API keys) y pégala aquí. " +
-                "Cada pregunta cuesta muy poco, y se cobra de tu saldo en Anthropic.",
+            when (provider) {
+                Provider.GEMINI ->
+                    "Gemini es gratis. Entra en aistudio.google.com con tu cuenta de Google, pulsa «Create API key», " +
+                        "copia la clave y pégala aquí. No hace falta tarjeta. Ten en cuenta que, en la versión gratis, " +
+                        "Google puede usar lo que le dices para mejorar sus productos."
+                Provider.CLAUDE ->
+                    "Claude es de pago. Crea una clave en console.anthropic.com (Settings → API keys), añade saldo en " +
+                        "Billing y pégala aquí. Es aparte de la suscripción de Claude."
+            },
             style = MaterialTheme.typography.bodyMedium,
         )
         Text(
@@ -257,16 +292,16 @@ private fun KeySetup(onSaveKey: (String) -> Unit, onOpenConsole: () -> Unit) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        TextButton(onClick = onOpenConsole) { Text("Abrir console.anthropic.com") }
+        TextButton(onClick = { onOpenUrl(provider.keyUrl) }) { Text("Abrir la página de claves") }
         OutlinedTextField(
             value = key,
             onValueChange = { key = it.trim() },
-            label = { Text("Clave (empieza por sk-ant-)") },
+            label = { Text("Clave (empieza por ${provider.keyPrefix})") },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth(),
         )
-        Button(onClick = { onSaveKey(key) }, enabled = key.startsWith("sk-ant-")) { Text("Guardar") }
+        Button(onClick = { onSaveKey(key) }, enabled = key.startsWith(provider.keyPrefix)) { Text("Guardar") }
     }
 }
 
@@ -277,23 +312,13 @@ private fun Settings(
     onRemoveKey: () -> Unit,
     onBack: () -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Modelo", style = MaterialTheme.typography.titleLarge)
-        AssistantModel.entries.forEach { option ->
-            Row(
-                Modifier.fillMaxWidth().selectable(selected = option == model, onClick = { onChooseModel(option) }),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(selected = option == model, onClick = { onChooseModel(option) })
-                Column(Modifier.padding(start = 8.dp)) {
-                    Text(option.label, style = MaterialTheme.typography.bodyLarge)
-                    Text(option.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
+    Column(
+        Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        ModelPicker(model, onChooseModel)
         Text("Al cambiar de modelo empieza una conversación nueva.", style = MaterialTheme.typography.bodySmall)
-        Text("Clave de Claude", style = MaterialTheme.typography.titleLarge)
-        Text("Hay una clave guardada en este móvil.", style = MaterialTheme.typography.bodyMedium)
+        Text("Clave de ${model.provider.label}", style = MaterialTheme.typography.titleMedium)
         Button(onClick = onRemoveKey) { Text("Quitar la clave") }
         TextButton(onClick = onBack) { Text("Volver") }
     }

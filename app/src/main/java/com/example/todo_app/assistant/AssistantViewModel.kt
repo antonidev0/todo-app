@@ -32,13 +32,15 @@ data class AssistantUiState(
 class AssistantViewModel(
     private val keyStore: ApiKeyStore,
     /** Crea el asistente con una clave y un modelo. */
-    private val newAssistant: (apiKey: String, model: AssistantModel) -> ClaudeAssistant,
+    private val newAssistant: (apiKey: String, model: AssistantModel) -> Assistant,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(AssistantUiState(hasKey = keyStore.get() != null, model = keyStore.model()))
+    private val _state = MutableStateFlow(keyStore.model().let { AssistantUiState(hasKey = hasKey(it), model = it) })
     val state: StateFlow<AssistantUiState> = _state.asStateFlow()
 
-    private var assistant: ClaudeAssistant? = null
+    private var assistant: Assistant? = null
+
+    private fun hasKey(model: AssistantModel) = keyStore.get(model.provider) != null
     private var nextId = 0L
 
     private fun line(text: String, fromUser: Boolean, isError: Boolean = false) =
@@ -47,7 +49,7 @@ class AssistantViewModel(
     fun send(text: String) {
         val clean = text.trim()
         if (clean.isEmpty() || _state.value.busy) return
-        val key = keyStore.get() ?: return
+        val key = keyStore.get(_state.value.model.provider) ?: return
         val current = assistant ?: newAssistant(key, _state.value.model).also { assistant = it }
         _state.update { it.copy(lines = it.lines + line(clean, fromUser = true), busy = true) }
         viewModelScope.launch {
@@ -75,15 +77,16 @@ class AssistantViewModel(
         _state.update { it.copy(lines = emptyList(), toSpeak = null) }
     }
 
+    /** Guarda la clave del proveedor del modelo elegido. */
     fun saveKey(key: String) {
         if (key.isBlank()) return
-        keyStore.set(key)
+        keyStore.set(_state.value.model.provider, key)
         assistant = null
         _state.update { it.copy(hasKey = true) }
     }
 
     fun removeKey() {
-        keyStore.set(null)
+        keyStore.set(_state.value.model.provider, null)
         assistant = null
         _state.update { AssistantUiState(hasKey = false, model = it.model) }
     }
@@ -93,7 +96,7 @@ class AssistantViewModel(
         if (model == _state.value.model) return
         keyStore.setModel(model)
         assistant = null
-        _state.update { it.copy(model = model, lines = emptyList(), toSpeak = null) }
+        _state.update { it.copy(model = model, hasKey = hasKey(model), lines = emptyList(), toSpeak = null) }
     }
 
     companion object {
