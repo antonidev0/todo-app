@@ -1,8 +1,5 @@
 package com.example.todo_app.data
 
-import android.content.Context
-import androidx.room.withTransaction
-import com.example.todo_app.reminders.ReminderScheduler
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -13,17 +10,17 @@ import kotlinx.coroutines.flow.Flow
  * guardan todas o ninguna, y la lista de la pantalla se actualiza una sola vez.
  * Las alarmas se programan después, cuando los datos ya están guardados.
  */
-class TaskRepository(context: Context) {
-    private val db = AppDatabase.get(context)
-    private val dao = db.taskDao()
-    private val scheduler = ReminderScheduler(context.applicationContext)
-
+class TaskRepository(
+    private val dao: TaskDao,
+    private val transactor: Transactor,
+    private val scheduler: ReminderAlarms,
+) {
     fun observeChildren(parentId: String?): Flow<List<TaskWithCounts>> = dao.observeChildren(parentId)
 
     fun observeTask(id: String): Flow<Task?> = dao.observeTask(id)
 
     suspend fun addTask(parentId: String?, title: String, reminderAt: Long?, repeatDays: Int, minutes: Int?) {
-        val task = db.withTransaction {
+        val task = transactor.inTransaction {
             Task(
                 parentId = parentId,
                 title = title.trim(),
@@ -42,8 +39,8 @@ class TaskRepository(context: Context) {
      * ejemplo, si se marcó como hecha desde la notificación o se repartió).
      */
     suspend fun editTask(taskId: String, title: String, reminderAt: Long?, repeatDays: Int, minutes: Int?) {
-        val updated = db.withTransaction {
-            val current = dao.getTask(taskId) ?: return@withTransaction null
+        val updated = transactor.inTransaction {
+            val current = dao.getTask(taskId) ?: return@inTransaction null
             current.copy(
                 title = title.trim(),
                 reminderAt = reminderAt,
@@ -56,8 +53,8 @@ class TaskRepository(context: Context) {
     }
 
     suspend fun setDone(taskId: String, done: Boolean) {
-        val updated = db.withTransaction {
-            val task = dao.getTask(taskId) ?: return@withTransaction null
+        val updated = transactor.inTransaction {
+            val task = dao.getTask(taskId) ?: return@inTransaction null
             val now = System.currentTimeMillis()
             task.copy(
                 done = done,
@@ -79,8 +76,8 @@ class TaskRepository(context: Context) {
      * recordatorio pasa a la próxima vez que toque. Devuelve null si la tarea ya no existe.
      */
     suspend fun startNextOccurrence(taskId: String): Task? {
-        val updated = db.withTransaction {
-            val task = dao.getTask(taskId) ?: return@withTransaction null
+        val updated = transactor.inTransaction {
+            val task = dao.getTask(taskId) ?: return@inTransaction null
             val now = System.currentTimeMillis()
             val next = task.copy(
                 done = false,
@@ -102,7 +99,7 @@ class TaskRepository(context: Context) {
      * le toca cada una. Devuelve el reparto para mostrarlo o compartirlo.
      */
     suspend fun splitSubtasks(parentId: String, people: List<String>): List<Splitter.Share> =
-        db.withTransaction {
+        transactor.inTransaction {
             val items = dao.getPendingChildren(parentId).map {
                 Splitter.Item(it.id, it.title, it.minutes ?: Splitter.DEFAULT_MINUTES)
             }
@@ -114,7 +111,7 @@ class TaskRepository(context: Context) {
 
     /** Borra la tarea y todas sus subtareas. */
     suspend fun deleteTask(taskId: String) {
-        val ids = db.withTransaction {
+        val ids = transactor.inTransaction {
             dao.getSubtreeIds(taskId).also { dao.markDeleted(it, System.currentTimeMillis()) }
         }
         ids.forEach {

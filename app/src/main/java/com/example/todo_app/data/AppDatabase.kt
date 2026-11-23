@@ -27,16 +27,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        @Volatile
-        private var instance: AppDatabase? = null
-
-        fun get(context: Context): AppDatabase =
-            instance ?: synchronized(this) {
-                instance ?: Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
-                    "recordatorios.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
-            }
+        /** Crea la base de datos. Solo debe llamarse desde [com.example.todo_app.AppContainer]. */
+        fun create(context: Context): AppDatabase =
+            Room.databaseBuilder(
+                context.applicationContext,
+                AppDatabase::class.java,
+                "recordatorios.db"
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
     }
 }

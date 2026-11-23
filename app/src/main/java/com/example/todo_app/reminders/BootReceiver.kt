@@ -4,7 +4,7 @@ import android.app.AlarmManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import com.example.todo_app.data.TaskRepository
+import com.example.todo_app.appContainer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -22,7 +22,7 @@ class BootReceiver : BroadcastReceiver() {
                 val pending = goAsync()
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
-                        TaskRepository(context).rescheduleAll()
+                        context.appContainer.taskRepository.rescheduleAll()
                     } finally {
                         pending.finish()
                     }

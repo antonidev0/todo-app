@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationManagerCompat
+import com.example.todo_app.data.ReminderAlarms
 import com.example.todo_app.data.Task
 
 /**
@@ -16,12 +17,11 @@ import com.example.todo_app.data.Task
  *  - la de seguimiento, que vuelve a preguntar "¿Ya está?" un rato después
  *    o cuando pulsas "En 15 min" ([scheduleFollowUp]).
  */
-class ReminderScheduler(private val context: Context) {
+class ReminderScheduler(private val context: Context) : ReminderAlarms {
 
     private val alarmManager = context.getSystemService(AlarmManager::class.java)
 
-    /** Programa el recordatorio de [task], o lo cancela si ya no hace falta. */
-    fun schedule(task: Task) {
+    override fun schedule(task: Task) {
         val at = task.reminderAt
         val recurring = task.repeatDays != 0
         val needed = at != null && task.deletedAt == null &&
@@ -33,7 +33,7 @@ class ReminderScheduler(private val context: Context) {
         setAlarm(at!!, mainIntent(task.id))
     }
 
-    fun cancel(taskId: String) {
+    override fun cancel(taskId: String) {
         alarmManager.cancel(mainIntent(taskId))
     }
 
@@ -43,12 +43,11 @@ class ReminderScheduler(private val context: Context) {
         setAlarm(at, followUpIntent(taskId, askAgain))
     }
 
-    fun cancelFollowUp(taskId: String) {
+    override fun cancelFollowUp(taskId: String) {
         alarmManager.cancel(followUpIntent(taskId, askAgain = false))
     }
 
-    /** Quita la notificación de [taskId] si se está mostrando. */
-    fun cancelNotification(taskId: String) {
+    override fun cancelNotification(taskId: String) {
         NotificationManagerCompat.from(context).cancel(requestCode(taskId))
     }
 
