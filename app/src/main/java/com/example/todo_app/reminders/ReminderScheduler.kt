@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import com.example.todo_app.data.ReminderAlarms
 import com.example.todo_app.data.Task
@@ -53,11 +54,16 @@ class ReminderScheduler(private val context: Context) : ReminderAlarms {
 
     private fun setAlarm(at: Long, pending: PendingIntent) {
         if (canScheduleExact(context)) {
-            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
-        } else {
-            // Sin permiso de alarmas exactas: puede llegar con unos minutos de retraso.
-            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
+            try {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
+                return
+            } catch (e: SecurityException) {
+                // Se retiró el permiso justo entre la comprobación y la llamada.
+                Log.w(TAG, "Sin permiso de alarma exacta; se usa una inexacta", e)
+            }
         }
+        // Sin permiso de alarmas exactas: puede llegar con unos minutos de retraso.
+        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
     }
 
     private fun mainIntent(taskId: String): PendingIntent =
@@ -88,6 +94,8 @@ class ReminderScheduler(private val context: Context) : ReminderAlarms {
     }
 
     companion object {
+        private const val TAG = "ReminderScheduler"
+
         /** Id de la alarma principal y de la notificación de la tarea. */
         fun requestCode(taskId: String): Int = taskId.hashCode()
 

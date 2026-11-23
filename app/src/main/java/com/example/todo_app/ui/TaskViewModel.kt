@@ -12,6 +12,7 @@ import com.example.todo_app.data.Task
 import com.example.todo_app.data.TaskRepository
 import com.example.todo_app.data.TaskWithCounts
 import com.example.todo_app.data.TeamStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -53,15 +54,43 @@ class TaskViewModel(
         path.value = path.value.dropLast(1)
     }
 
+    /** Mensaje de error para enseñar al usuario, o null si no hay ninguno. */
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
+
+    fun errorShown() {
+        _error.value = null
+    }
+
+    /**
+     * Lanza [block] y, si falla, avisa con [message] en lugar de cerrar la app.
+     * La cancelación se deja pasar para no romper la concurrencia estructurada.
+     */
+    private fun launchSafely(message: String, block: suspend () -> Unit) {
+        viewModelScope.launch {
+            try {
+                block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _error.value = message
+            }
+        }
+    }
+
     fun add(title: String, reminderAt: Long?, repeatDays: Int, minutes: Int?) {
         if (title.isBlank()) return
         val parentId = path.value.lastOrNull()
-        viewModelScope.launch { repo.addTask(parentId, title, reminderAt, repeatDays, minutes) }
+        launchSafely("No se pudo guardar la tarea") {
+            repo.addTask(parentId, title, reminderAt, repeatDays, minutes)
+        }
     }
 
     fun edit(task: Task, title: String, reminderAt: Long?, repeatDays: Int, minutes: Int?) {
         if (title.isBlank()) return
-        viewModelScope.launch { repo.editTask(task.id, title, reminderAt, repeatDays, minutes) }
+        launchSafely("No se pudieron guardar los cambios") {
+            repo.editTask(task.id, title, reminderAt, repeatDays, minutes)
+        }
     }
 
     // ---- Repartir el trabajo entre el equipo ----
@@ -87,7 +116,7 @@ class TaskViewModel(
     fun splitWork(people: List<String>) {
         val parentId = path.value.lastOrNull() ?: return
         if (people.isEmpty()) return
-        viewModelScope.launch { _split.value = repo.splitSubtasks(parentId, people) }
+        launchSafely("No se pudo repartir el trabajo") { _split.value = repo.splitSubtasks(parentId, people) }
     }
 
     fun closeSplit() {
@@ -95,11 +124,11 @@ class TaskViewModel(
     }
 
     fun toggleDone(task: Task) {
-        viewModelScope.launch { repo.setDone(task.id, !task.done) }
+        launchSafely("No se pudo actualizar la tarea") { repo.setDone(task.id, !task.done) }
     }
 
     fun delete(task: Task) {
-        viewModelScope.launch {
+        launchSafely("No se pudo borrar la tarea") {
             repo.deleteTask(task.id)
             // Si estábamos dentro de la tarea borrada, salimos de ella.
             val i = path.value.indexOf(task.id)
