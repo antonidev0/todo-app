@@ -35,6 +35,19 @@ android {
     buildFeatures {
         compose = true
     }
+    packaging {
+        resources {
+            // Archivos de licencia repetidos en las librerías del cliente de Claude.
+            excludes += setOf(
+                "/META-INF/{AL2.0,LGPL2.1}",
+                "/META-INF/DEPENDENCIES",
+                "/META-INF/LICENSE*",
+                "/META-INF/NOTICE*",
+                "/META-INF/INDEX.LIST",
+                "/META-INF/versions/9/OSGI-INF/MANIFEST.MF",
+            )
+        }
+    }
 }
 
 // Room guarda el esquema de cada versión en app/schemas para poder probar migraciones.
@@ -56,6 +69,7 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
+    implementation(libs.anthropic.java)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(platform(libs.androidx.compose.bom))
