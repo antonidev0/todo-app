@@ -4,6 +4,7 @@ import com.example.todo_app.data.ReminderAlarms
 import com.example.todo_app.data.Task
 import com.example.todo_app.data.TaskDao
 import com.example.todo_app.data.TaskWithCounts
+import com.example.todo_app.data.TeamStore
 import com.example.todo_app.data.Transactor
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -73,12 +74,15 @@ object DirectTransactor : Transactor {
 
 /** Apunta qué alarmas y notificaciones se pidieron, en vez de programarlas. */
 class FakeAlarms : ReminderAlarms {
+    /** Si es true, programar falla como si Android rechazara la alarma. */
+    var failSchedule = false
     val scheduled = mutableListOf<Task>()
     val cancelled = mutableListOf<String>()
     val cancelledFollowUps = mutableListOf<String>()
     val cancelledNotifications = mutableListOf<String>()
 
     override fun schedule(task: Task) {
+        check(!failSchedule) { "fallo simulado" }
         scheduled += task
     }
 
@@ -92,5 +96,14 @@ class FakeAlarms : ReminderAlarms {
 
     override fun cancelNotification(taskId: String) {
         cancelledNotifications += taskId
+    }
+}
+
+/** Equipo guardado en memoria. */
+class FakeTeamStore(var names: List<String> = emptyList()) : TeamStore {
+    override suspend fun load(): List<String> = names
+
+    override fun save(names: List<String>) {
+        this.names = names
     }
 }
