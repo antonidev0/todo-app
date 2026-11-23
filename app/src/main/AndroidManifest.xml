@@ -12,6 +12,13 @@
     <!-- Volver a programar los recordatorios después de reiniciar el móvil -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Para poder abrir el reconocimiento de voz del móvil (el botón 🎤) -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+    </queries>
+
     <application
         android:name=".TodoApp"
         android:allowBackup="true"

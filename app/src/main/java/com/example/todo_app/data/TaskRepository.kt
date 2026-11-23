@@ -29,10 +29,14 @@ class TaskRepository(
             DayPlan(tasks, done)
         }
 
-    suspend fun addTask(parentId: String?, form: TaskForm) {
+    /**
+     * Guarda una tarea nueva y, si se dan, sus [subtasks] (solo el título), todo en una
+     * transacción. Devuelve la tarea guardada.
+     */
+    suspend fun addTask(parentId: String?, form: TaskForm, subtasks: List<String> = emptyList()): Task {
         val clean = normalize(form)
         val task = transactor.inTransaction {
-            Task(
+            val parent = Task(
                 parentId = parentId,
                 title = clean.title,
                 reminderAt = clean.reminderAt,
@@ -42,8 +46,13 @@ class TaskRepository(
                 date = clean.date,
                 position = dao.nextPosition(parentId),
             ).also { dao.insert(it) }
+            subtasks.map { it.trim() }.filter { it.isNotEmpty() }.forEachIndexed { i, title ->
+                dao.insert(Task(parentId = parent.id, title = title, position = i))
+            }
+            parent
         }
         scheduler.schedule(task)
+        return task
     }
 
     /**

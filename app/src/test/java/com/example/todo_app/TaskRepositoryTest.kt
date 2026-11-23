@@ -179,4 +179,12 @@ class TaskRepositoryTest {
         val conBasura = shares.single { s -> s.items.any { it.id == "basura" } }
         assertEquals("basura", conBasura.items.last().id)
     }
+
+    @Test
+    fun unaTareaNuevaPuedeLlevarSubtareas() = runBlocking {
+        val parent = repo.addTask(null, TaskForm("Compra"), listOf("Pan", " ", "Leche "))
+        val children = dao.all.values.filter { it.parentId == parent.id }.sortedBy { it.position }
+        assertEquals(listOf("Pan", "Leche"), children.map { it.title })
+        assertEquals(listOf(0, 1), children.map { it.position })
+    }
 }

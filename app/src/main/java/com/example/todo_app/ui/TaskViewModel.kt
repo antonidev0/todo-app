@@ -10,11 +10,13 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.example.todo_app.appContainer
 import com.example.todo_app.data.DayPlan
+import com.example.todo_app.data.Recurrence
 import com.example.todo_app.data.Splitter
 import com.example.todo_app.data.Task
 import com.example.todo_app.data.TaskForm
 import com.example.todo_app.data.TaskRepository
 import com.example.todo_app.data.TeamStore
+import com.example.todo_app.data.VoiceParser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,6 +31,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.LocalDateTime
 
 class TaskViewModel(
     private val repo: TaskRepository,
@@ -36,6 +39,8 @@ class TaskViewModel(
     private val savedState: SavedStateHandle,
     /** Se puede cambiar en los tests. */
     private val clock: () -> LocalDate = { LocalDate.now() },
+    /** Día y hora de ahora, para entender «a las 9» o «en 20 minutos». */
+    private val now: () -> LocalDateTime = { LocalDateTime.now() },
 ) : ViewModel() {
 
     /**
@@ -66,6 +71,7 @@ class TaskViewModel(
     private data class Transient(
         val split: List<Splitter.Share>? = null,
         val error: String? = null,
+        val notice: Notice? = null,
         val askTeamToday: Boolean = false,
     )
 
@@ -101,6 +107,7 @@ class TaskViewModel(
             askTeamToday = extra.askTeamToday,
             split = extra.split,
             error = extra.error,
+            notice = extra.notice,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TaskUiState(today = clock()))
 
@@ -138,6 +145,15 @@ class TaskViewModel(
         transient.update { it.copy(error = null) }
     }
 
+    /** Enseña un mensaje de error que viene de la pantalla (por ejemplo, sin micrófono). */
+    fun showError(message: String) {
+        transient.update { it.copy(error = message) }
+    }
+
+    fun noticeShown() {
+        transient.update { it.copy(notice = null) }
+    }
+
     /**
      * Lanza [block] y, si falla, avisa con [message] en lugar de cerrar la app.
      * La cancelación se deja pasar para no romper la concurrencia estructurada.
@@ -161,6 +177,51 @@ class TaskViewModel(
         val parentId = path.value.lastOrNull()
         launchSafely("No se pudo guardar la tarea") { repo.addTask(parentId, form) }
     }
+
+    /**
+     * Crea una tarea a partir de lo dicho por voz («recuérdame comprar pan mañana a las 9»).
+     * Dentro de una tarea se crea como subtarea. Si no se dijo día, va al día que se está viendo.
+     */
+    fun addFromVoice(spoken: String) {
+        val parsed = VoiceParser.parse(spoken, now())
+        if (parsed == null) {
+            transient.update { it.copy(error = "No he entendido qué añadir: «${spoken.trim()}»") }
+            return
+        }
+        val parentId = path.value.lastOrNull()
+        val form = when {
+            // Las subtareas no tienen día ni se repiten por su cuenta; sí pueden tener aviso.
+            parentId != null -> parsed.form.copy(date = null, repeatDays = 0)
+            !parsed.hasDay -> parsed.form.copy(date = currentDate()?.toString())
+            else -> parsed.form
+        }
+        launchSafely("No se pudo guardar la tarea") {
+            val task = repo.addTask(parentId, form, parsed.subtasks)
+            // Si va a otro día, nos vamos a ese día para verla.
+            val day = task.date
+            if (parentId == null && day != null && day != dateKey.value) {
+                savedState[DATE_KEY] = day
+            }
+            transient.update { it.copy(notice = Notice(voiceSummary(task, parsed.subtasks.size), task.id)) }
+        }
+    }
+
+    /** Deshace la última tarea creada por voz. */
+    fun undoVoice(taskId: String) {
+        launchSafely("No se pudo deshacer") { repo.deleteTask(taskId) }
+    }
+
+    private fun voiceSummary(task: Task, subtaskCount: Int): String = buildList {
+        add("Añadida «${task.title}»")
+        val at = task.reminderAt
+        when {
+            task.repeatDays != 0 ->
+                add("🔁 " + Recurrence.describe(task.repeatDays) + (at?.let { " a las " + formatTime(it) } ?: ""))
+            at != null -> add(dayChipLabel(task.date?.let { LocalDate.parse(it) }, clock()).lowercase() + " a las " + formatTime(at))
+            task.date != null -> add(dayChipLabel(LocalDate.parse(task.date), clock()).lowercase())
+        }
+        if (subtaskCount > 0) add(if (subtaskCount == 1) "1 subtarea" else "$subtaskCount subtareas")
+    }.joinToString(" · ")
 
     fun edit(task: Task, form: TaskForm) {
         if (form.title.isBlank()) return
