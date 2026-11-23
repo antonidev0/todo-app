@@ -1,5 +1,6 @@
 package com.example.todo_app
 
+import com.example.todo_app.data.Completion
 import com.example.todo_app.data.ReminderAlarms
 import com.example.todo_app.data.Task
 import com.example.todo_app.data.TaskDao
@@ -13,6 +14,9 @@ import kotlinx.coroutines.flow.map
 /** Base de datos en memoria que imita las consultas de [TaskDao] para los tests. */
 class FakeTaskDao : TaskDao {
     private val rows = MutableStateFlow<Map<String, Task>>(emptyMap())
+    private val completions = MutableStateFlow<Set<Completion>>(emptySet())
+
+    val allCompletions: Set<Completion> get() = completions.value
 
     val all: Map<String, Task> get() = rows.value
 
@@ -54,6 +58,25 @@ class FakeTaskDao : TaskDao {
     override suspend fun markPending(ids: List<String>, now: Long) {
         ids.mapNotNull { rows.value[it] }.filter { it.done }
             .forEach { put(it.copy(done = false, completedAt = null, updatedAt = now)) }
+    }
+
+    override fun observeAll(): Flow<List<Task>> = rows.map { live() }
+
+    override suspend fun getAll(): List<Task> = live()
+
+    override fun observeCompletionsSince(fromDate: String): Flow<List<Completion>> =
+        completions.map { set -> set.filter { it.date >= fromDate } }
+
+    override suspend fun getCompletionsOn(date: String): List<Completion> =
+        completions.value.filter { it.date == date }
+
+    override suspend fun insertCompletion(completion: Completion) {
+        deleteCompletion(completion.taskId, completion.date)
+        completions.value = completions.value + completion
+    }
+
+    override suspend fun deleteCompletion(taskId: String, date: String) {
+        completions.value = completions.value.filterNot { it.taskId == taskId && it.date == date }.toSet()
     }
 
     override suspend fun insert(task: Task) = put(task)
@@ -100,10 +123,16 @@ class FakeAlarms : ReminderAlarms {
 }
 
 /** Equipo guardado en memoria. */
-class FakeTeamStore(var names: List<String> = emptyList()) : TeamStore {
+class FakeTeamStore(var names: List<String> = emptyList(), var asked: String? = null) : TeamStore {
     override suspend fun load(): List<String> = names
 
     override fun save(names: List<String>) {
         this.names = names
+    }
+
+    override suspend fun lastAskedDate(): String? = asked
+
+    override fun setLastAskedDate(date: String) {
+        asked = date
     }
 }

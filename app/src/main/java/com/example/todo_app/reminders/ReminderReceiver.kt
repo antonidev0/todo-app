@@ -19,6 +19,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 
 /**
  * Recibe las alarmas y muestra las notificaciones. Hace de pequeño "bot":
@@ -54,19 +55,20 @@ class ReminderReceiver : BroadcastReceiver() {
             ACTION_SHOW -> {
                 var task = repo.getTask(taskId) ?: return
                 if (task.deletedAt != null) return
+                // Si ya la marcaste como hecha hoy (por ejemplo por la mañana), no molesta.
+                val doneToday = repo.isDoneOn(taskId, LocalDate.now())
                 if (task.repeatDays != 0) {
-                    // Nueva vez de una tarea que se repite: vuelve a estar pendiente.
+                    // Programa la próxima vez que toque, avise o no ahora.
                     task = repo.startNextOccurrence(taskId) ?: return
-                } else if (task.done) {
-                    return
                 }
+                if (doneToday) return
                 show(context, task, followUp = false)
                 scheduler.scheduleFollowUp(taskId, FOLLOW_UP_MINUTES, askAgain = false)
             }
 
             ACTION_FOLLOW_UP -> {
                 val task = repo.getTask(taskId) ?: return
-                if (task.done || task.deletedAt != null) return
+                if (task.deletedAt != null || repo.isDoneOn(taskId, LocalDate.now())) return
                 show(context, task, followUp = true)
                 if (intent.getBooleanExtra(EXTRA_ASK_AGAIN, false)) {
                     scheduler.scheduleFollowUp(taskId, FOLLOW_UP_MINUTES, askAgain = false)
@@ -80,7 +82,7 @@ class ReminderReceiver : BroadcastReceiver() {
 
             ACTION_DONE -> {
                 // setDone también quita la notificación.
-                repo.setDone(taskId, true)
+                repo.setDoneOn(taskId, LocalDate.now(), true)
             }
         }
     }

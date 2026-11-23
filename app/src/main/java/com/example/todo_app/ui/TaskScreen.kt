@@ -2,6 +2,7 @@ package com.example.todo_app.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -10,7 +11,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
@@ -23,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -41,8 +45,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.todo_app.data.Recurrence
 import com.example.todo_app.data.Task
-import com.example.todo_app.data.TaskWithCounts
+import com.example.todo_app.data.Priority
+import com.example.todo_app.data.TaskForm
 import com.example.todo_app.ui.theme.TodoappTheme
+import java.time.LocalDate
 
 /** Une la pantalla con el ViewModel. Toda la interfaz está en [TaskContent]. */
 @Composable
@@ -51,6 +57,7 @@ fun TaskScreen(vm: TaskViewModel, topBanner: @Composable () -> Unit = {}) {
     TaskContent(
         state = state,
         topBanner = topBanner,
+        onSelectDate = vm::selectDate,
         onOpen = vm::open,
         onBack = vm::goBack,
         onToggle = vm::toggleDone,
@@ -61,6 +68,8 @@ fun TaskScreen(vm: TaskViewModel, topBanner: @Composable () -> Unit = {}) {
             vm.saveTeam(allNames)
             vm.splitWork(present)
         },
+        onAnswerTeamToday = vm::answerTeamToday,
+        onSkipTeamToday = vm::skipTeamToday,
         onCloseSplit = vm::closeSplit,
         onErrorShown = vm::errorShown,
     )
@@ -74,13 +83,16 @@ fun TaskScreen(vm: TaskViewModel, topBanner: @Composable () -> Unit = {}) {
 @Composable
 fun TaskContent(
     state: TaskUiState,
+    onSelectDate: (LocalDate?) -> Unit,
     onOpen: (Task) -> Unit,
     onBack: () -> Unit,
-    onToggle: (Task) -> Unit,
-    onAdd: (title: String, reminderAt: Long?, repeatDays: Int, minutes: Int?) -> Unit,
-    onEdit: (task: Task, title: String, reminderAt: Long?, repeatDays: Int, minutes: Int?) -> Unit,
+    onToggle: (TaskItem) -> Unit,
+    onAdd: (TaskForm) -> Unit,
+    onEdit: (Task, TaskForm) -> Unit,
     onDelete: (Task) -> Unit,
     onSplit: (allNames: List<String>, present: List<String>) -> Unit,
+    onAnswerTeamToday: (allNames: List<String>, present: List<String>) -> Unit,
+    onSkipTeamToday: () -> Unit,
     onCloseSplit: () -> Unit,
     onErrorShown: () -> Unit,
     modifier: Modifier = Modifier,
@@ -108,7 +120,7 @@ fun TaskContent(
             TopAppBar(
                 title = {
                     Text(
-                        text = state.current?.title ?: "Mis tareas",
+                        text = state.current?.title ?: dayTitle(state.selectedDate, state.today),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -119,7 +131,7 @@ fun TaskContent(
                     }
                 },
                 actions = {
-                    if (state.canGoBack && state.hasPendingTasks) {
+                    if (state.canSplit) {
                         TextButton(onClick = { choosingTeam = true }) { Text("👥 Repartir") }
                     }
                 },
@@ -133,6 +145,9 @@ fun TaskContent(
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
             topBanner()
+            if (!state.canGoBack) {
+                DayStrip(selected = state.selectedDate, today = state.today, onSelect = onSelectDate)
+            }
             when {
                 // Mientras carga no decimos "No tienes tareas", que sería falso.
                 state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -143,8 +158,11 @@ fun TaskContent(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = if (state.canGoBack) "Esta tarea no tiene subtareas.\nPulsa «+ Subtarea» para añadir una."
-                        else "No tienes tareas.\nPulsa «+ Tarea» para añadir la primera.",
+                        text = when {
+                            state.canGoBack -> "Esta tarea no tiene subtareas.\nPulsa «+ Subtarea» para añadir una."
+                            state.selectedDate == null -> "No hay tareas sin día."
+                            else -> "No hay tareas este día.\nPulsa «+ Tarea» para añadir una."
+                        },
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -154,7 +172,7 @@ fun TaskContent(
                         TaskRow(
                             item = item,
                             onOpen = { onOpen(item.task) },
-                            onToggle = { onToggle(item.task) },
+                            onToggle = { onToggle(item) },
                             onEdit = { editing = TaskEditor.Edit(item.task) },
                             onDelete = { toDelete = item.task },
                         )
@@ -167,22 +185,32 @@ fun TaskContent(
 
     editing?.let { editor ->
         val task = (editor as? TaskEditor.Edit)?.task
+        val isSubtask = if (task != null) task.parentId != null else state.canGoBack
         TaskDialog(
             heading = when {
                 task != null -> "Editar tarea"
                 state.canGoBack -> "Nueva subtarea"
                 else -> "Nueva tarea"
             },
-            initialTitle = task?.title.orEmpty(),
-            initialReminder = task?.reminderAt,
-            initialRepeatDays = task?.repeatDays ?: 0,
-            initialMinutes = task?.minutes,
+            initial = task?.let {
+                TaskForm(it.title, it.reminderAt, it.repeatDays, it.minutes, it.priority, it.date)
+            } ?: TaskForm(title = "", date = if (isSubtask) null else state.selectedDate?.toString()),
+            showDay = !isSubtask,
             onDismiss = { editing = null },
-            onSave = { title, reminderAt, repeatDays, minutes ->
-                if (task == null) onAdd(title, reminderAt, repeatDays, minutes)
-                else onEdit(task, title, reminderAt, repeatDays, minutes)
+            onSave = { form ->
+                if (task == null) onAdd(form) else onEdit(task, form)
                 editing = null
             },
+        )
+    }
+
+    if (state.askTeamToday && !choosingTeam) {
+        TeamDialog(
+            title = "¿Quién trabaja hoy?",
+            savedNames = state.team,
+            dismissLabel = "Ahora no",
+            onDismiss = onSkipTeamToday,
+            onSplit = onAnswerTeamToday,
         )
     }
 
@@ -199,7 +227,7 @@ fun TaskContent(
 
     state.split?.let { shares ->
         SplitResultDialog(
-            title = state.current?.title ?: "Tareas",
+            title = state.current?.title ?: dayTitle(state.selectedDate, state.today),
             shares = shares,
             onDismiss = onCloseSplit,
         )
@@ -222,7 +250,7 @@ fun TaskContent(
 
 @Composable
 private fun TaskRow(
-    item: TaskWithCounts,
+    item: TaskItem,
     onOpen: () -> Unit,
     onToggle: () -> Unit,
     onEdit: () -> Unit,
@@ -238,24 +266,28 @@ private fun TaskRow(
             .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Checkbox(checked = task.done, onCheckedChange = { onToggle() })
+        Checkbox(checked = item.done, onCheckedChange = { onToggle() })
         Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
             Text(
                 text = task.title,
                 style = MaterialTheme.typography.bodyLarge,
-                textDecoration = if (task.done) TextDecoration.LineThrough else null,
-                color = if (task.done) MaterialTheme.colorScheme.onSurfaceVariant
+                textDecoration = if (item.done) TextDecoration.LineThrough else null,
+                color = if (item.done) MaterialTheme.colorScheme.onSurfaceVariant
                 else MaterialTheme.colorScheme.onSurface,
             )
             val details = buildList {
+                when (task.priority) {
+                    Priority.FIRST -> add("⬆ Primero")
+                    Priority.LAST -> add("⬇ Al final")
+                }
                 task.assignee?.let { add("👤 $it") }
                 task.minutes?.let { add("⏱ $it min") }
                 if (item.childCount > 0) add("${item.doneChildCount}/${item.childCount} subtareas")
                 val at = task.reminderAt
                 when {
-                    at != null && task.repeatDays != 0 ->
-                        add("🔁 " + Recurrence.describe(task.repeatDays) + " · " + formatTime(at))
-                    at != null -> add("⏰ " + formatReminder(at))
+                    task.repeatDays != 0 ->
+                        add("🔁 " + Recurrence.describe(task.repeatDays) + (at?.let { " · " + formatTime(it) } ?: ""))
+                    at != null -> add("⏰ " + formatTime(at))
                 }
             }
             if (details.isNotEmpty()) {
@@ -281,6 +313,33 @@ private fun TaskRow(
     }
 }
 
+/** Fila de días: Hoy, Mañana, los 5 siguientes y "Sin día". */
+@Composable
+private fun DayStrip(selected: LocalDate?, today: LocalDate, onSelect: (LocalDate?) -> Unit) {
+    val days: List<LocalDate?> = (0L..6L).map { today.plusDays(it) } + listOf(null)
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(days) { day ->
+            val isSelected = day == selected
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.clickable { onSelect(day) },
+            ) {
+                Text(
+                    dayChipLabel(day, today),
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                )
+            }
+        }
+    }
+}
+
 @Preview(showBackground = true)
 @Composable
 private fun TaskContentPreview() {
@@ -289,12 +348,13 @@ private fun TaskContentPreview() {
             state = TaskUiState(
                 loading = false,
                 tasks = listOf(
-                    TaskWithCounts(Task(id = "1", title = "Cierre del viernes", repeatDays = 16, reminderAt = 0L), 4, 1),
-                    TaskWithCounts(Task(id = "2", title = "Comprar leche", done = true), 0, 0),
+                    TaskItem(Task(id = "1", title = "Cierre", repeatDays = 48, priority = Priority.LAST), false, 4, 1),
+                    TaskItem(Task(id = "2", title = "Comprar leche"), true),
                 ),
             ),
-            onOpen = {}, onBack = {}, onToggle = {}, onAdd = { _, _, _, _ -> },
-            onEdit = { _, _, _, _, _ -> }, onDelete = {}, onSplit = { _, _ -> },
+            onSelectDate = {}, onOpen = {}, onBack = {}, onToggle = {}, onAdd = {},
+            onEdit = { _, _ -> }, onDelete = {}, onSplit = { _, _ -> },
+            onAnswerTeamToday = { _, _ -> }, onSkipTeamToday = {},
             onCloseSplit = {}, onErrorShown = {},
         )
     }

@@ -1,6 +1,10 @@
 package com.example.todo_app.data
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 
 /**
  * Único punto de entrada a las tareas. Se encarga también de programar o cancelar
@@ -19,14 +23,23 @@ class TaskRepository(
 
     fun observeTask(id: String): Flow<Task?> = dao.observeTask(id)
 
-    suspend fun addTask(parentId: String?, title: String, reminderAt: Long?, repeatDays: Int, minutes: Int?) {
+    /** Todas las tareas y lo hecho cada día, listo para mirar por días. */
+    fun observePlan(today: LocalDate = LocalDate.now()): Flow<DayPlan> =
+        combine(dao.observeAll(), dao.observeCompletionsSince(today.minusDays(7).toString())) { tasks, done ->
+            DayPlan(tasks, done)
+        }
+
+    suspend fun addTask(parentId: String?, form: TaskForm) {
+        val clean = normalize(form)
         val task = transactor.inTransaction {
             Task(
                 parentId = parentId,
-                title = title.trim(),
-                reminderAt = reminderAt,
-                repeatDays = if (reminderAt == null) 0 else repeatDays,
-                minutes = minutes,
+                title = clean.title,
+                reminderAt = clean.reminderAt,
+                repeatDays = clean.repeatDays,
+                minutes = clean.minutes,
+                priority = clean.priority,
+                date = clean.date,
                 position = dao.nextPosition(parentId),
             ).also { dao.insert(it) }
         }
@@ -38,18 +51,63 @@ class TaskRepository(
      * para no pisar lo que haya cambiado mientras el diálogo estaba abierto (por
      * ejemplo, si se marcó como hecha desde la notificación o se repartió).
      */
-    suspend fun editTask(taskId: String, title: String, reminderAt: Long?, repeatDays: Int, minutes: Int?) {
+    suspend fun editTask(taskId: String, form: TaskForm) {
+        val clean = normalize(form)
         val updated = transactor.inTransaction {
             val current = dao.getTask(taskId) ?: return@inTransaction null
             current.copy(
-                title = title.trim(),
-                reminderAt = reminderAt,
-                repeatDays = if (reminderAt == null) 0 else repeatDays,
-                minutes = minutes,
+                title = clean.title,
+                reminderAt = clean.reminderAt,
+                repeatDays = clean.repeatDays,
+                minutes = clean.minutes,
+                priority = clean.priority,
+                date = clean.date,
                 updatedAt = System.currentTimeMillis(),
             ).also { dao.update(it) }
         } ?: return
         scheduler.schedule(updated)
+    }
+
+    /**
+     * Deja el formulario coherente: las que se repiten no tienen día fijo, y las de
+     * una vez con hora van el día de esa hora.
+     */
+    private fun normalize(form: TaskForm): TaskForm {
+        val at = form.reminderAt
+        val date = when {
+            form.repeatDays != 0 -> null
+            at != null -> Instant.ofEpochMilli(at).atZone(ZoneId.systemDefault()).toLocalDate().toString()
+            else -> form.date
+        }
+        return form.copy(title = form.title.trim(), date = date)
+    }
+
+    /**
+     * Marca [taskId] como hecha (o no) el día [date]. Si su tarea principal se repite,
+     * solo cuenta para ese día; si no, la tarea queda hecha para siempre.
+     */
+    suspend fun setDoneOn(taskId: String, date: LocalDate, done: Boolean) {
+        val perDay = transactor.inTransaction {
+            val task = dao.getTask(taskId) ?: return@inTransaction null
+            val perDay = DayPlan(dao.getAll(), emptyList()).isPerDay(task)
+            if (perDay) {
+                if (done) dao.insertCompletion(Completion(taskId, date.toString()))
+                else dao.deleteCompletion(taskId, date.toString())
+            }
+            perDay
+        } ?: return
+        if (!perDay) {
+            setDone(taskId, done)
+        } else if (done && date == LocalDate.now()) {
+            scheduler.cancelFollowUp(taskId)
+            scheduler.cancelNotification(taskId)
+        }
+    }
+
+    /** ¿Está [taskId] hecha el día [date]? */
+    suspend fun isDoneOn(taskId: String, date: LocalDate): Boolean {
+        val task = dao.getTask(taskId) ?: return false
+        return DayPlan(dao.getAll(), dao.getCompletionsOn(date.toString())).isDone(task, date)
     }
 
     suspend fun setDone(taskId: String, done: Boolean) {
@@ -79,15 +137,12 @@ class TaskRepository(
         val updated = transactor.inTransaction {
             val task = dao.getTask(taskId) ?: return@inTransaction null
             val now = System.currentTimeMillis()
+            // Lo hecho se guarda por día, así que aquí solo se pasa a la próxima vez.
             val next = task.copy(
-                done = false,
-                completedAt = null,
                 reminderAt = Recurrence.nextFor(task, now) ?: task.reminderAt,
                 updatedAt = now,
             )
             dao.update(next)
-            // Por ejemplo "Cierre del viernes": cada semana sus subtareas vuelven a empezar.
-            dao.markPending(dao.getSubtreeIds(taskId) - taskId, now)
             next
         } ?: return null
         scheduler.schedule(updated)
@@ -95,13 +150,17 @@ class TaskRepository(
     }
 
     /**
-     * Reparte las subtareas pendientes de [parentId] entre [people] y guarda a quién
-     * le toca cada una. Devuelve el reparto para mostrarlo o compartirlo.
+     * Reparte entre [people] lo pendiente del día [date]: las tareas principales de ese
+     * día si [parentId] es null, o las subtareas de [parentId]. Las tareas con subtareas
+     * pendientes se reparten por subtareas. Guarda a quién le toca cada una y devuelve
+     * el reparto para mostrarlo o compartirlo.
      */
-    suspend fun splitSubtasks(parentId: String, people: List<String>): List<Splitter.Share> =
+    suspend fun splitWork(parentId: String?, date: LocalDate?, people: List<String>): List<Splitter.Share> =
         transactor.inTransaction {
-            val items = dao.getPendingChildren(parentId).map {
-                Splitter.Item(it.id, it.title, it.minutes ?: Splitter.DEFAULT_MINUTES)
+            val plan = DayPlan(dao.getAll(), date?.let { dao.getCompletionsOn(it.toString()) }.orEmpty())
+            val list = if (parentId == null) plan.topLevelOn(date) else plan.childrenOf(parentId, date)
+            val items = plan.pendingWork(list, date).map {
+                Splitter.Item(it.id, it.title, it.minutes ?: Splitter.DEFAULT_MINUTES, it.priority)
             }
             val shares = Splitter.split(items, people)
             val now = System.currentTimeMillis()

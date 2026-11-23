@@ -8,12 +8,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -37,82 +37,81 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.todo_app.data.Recurrence
 import com.example.todo_app.data.Splitter
+import com.example.todo_app.data.Priority
+import com.example.todo_app.data.TaskForm
 import java.time.DayOfWeek
 import java.time.Instant
-import java.time.LocalDateTime
+import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 @Composable
 internal fun TaskDialog(
     heading: String,
-    initialTitle: String,
-    initialReminder: Long?,
-    initialRepeatDays: Int,
-    initialMinutes: Int?,
+    initial: TaskForm,
+    /** false en las subtareas: van con su tarea principal y no tienen día propio. */
+    showDay: Boolean,
     onDismiss: () -> Unit,
-    onSave: (String, Long?, Int, Int?) -> Unit,
+    onSave: (TaskForm) -> Unit,
 ) {
     val context = LocalContext.current
+    val zone = ZoneId.systemDefault()
+    val initialTime = initial.reminderAt?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalTime() }
+
     // rememberSaveable: lo escrito no se pierde al girar el móvil.
-    var title by rememberSaveable { mutableStateOf(initialTitle) }
-    var reminderAt by rememberSaveable { mutableStateOf(initialReminder) }
-    var repeatDays by rememberSaveable { mutableIntStateOf(initialRepeatDays) }
-    var minutesText by rememberSaveable { mutableStateOf(initialMinutes?.toString() ?: "") }
+    var title by rememberSaveable { mutableStateOf(initial.title) }
+    var repeatDays by rememberSaveable { mutableIntStateOf(initial.repeatDays) }
+    var minutesText by rememberSaveable { mutableStateOf(initial.minutes?.toString() ?: "") }
+    var priority by rememberSaveable { mutableIntStateOf(initial.priority) }
+    /** Día de una tarea de una vez, como "2026-11-23", o null. */
+    var dateText by rememberSaveable {
+        mutableStateOf(initial.date ?: initial.reminderAt?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate().toString() })
+    }
+    /** Hora del aviso en minutos desde medianoche, o -1 si no hay. */
+    var timeMinutes by rememberSaveable { mutableIntStateOf(initialTime?.let { it.hour * 60 + it.minute } ?: -1) }
 
-    fun currentTime(): LocalDateTime = reminderAt?.let {
-        LocalDateTime.ofInstant(Instant.ofEpochMilli(it), ZoneId.systemDefault())
-    } ?: LocalDateTime.now().plusHours(1).withMinute(0)
+    val repeating = repeatDays != 0
+    val date: LocalDate? = dateText?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+    val time: LocalTime? = if (timeMinutes >= 0) LocalTime.of(timeMinutes / 60, timeMinutes % 60) else null
 
-    fun nextRepeat(days: Int, hour: Int, minute: Int): Long? =
-        Recurrence.next(System.currentTimeMillis(), days, hour, minute)
-
-    /** Tarea de una sola vez: elegir día y hora. */
-    fun pickDateTime() {
-        val start = currentTime()
+    fun pickDate() {
+        val start = date ?: LocalDate.now()
         DatePickerDialog(
             context,
-            { _, year, month, day ->
-                TimePickerDialog(
-                    context,
-                    { _, hour, minute ->
-                        reminderAt = LocalDateTime.of(year, month + 1, day, hour, minute)
-                            .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                    },
-                    start.hour,
-                    start.minute,
-                    true,
-                ).show()
-            },
+            { _, year, month, day -> dateText = LocalDate.of(year, month + 1, day).toString() },
             start.year,
             start.monthValue - 1,
             start.dayOfMonth,
-        ).apply { datePicker.minDate = System.currentTimeMillis() - 1000 }.show()
+        ).show()
     }
 
-    /** Tarea que se repite: solo hace falta la hora. */
     fun pickTime() {
-        val start = currentTime()
+        val start = time ?: LocalTime.now().plusHours(1).withMinute(0)
         TimePickerDialog(
             context,
-            { _, hour, minute -> reminderAt = nextRepeat(repeatDays, hour, minute) },
+            { _, hour, minute -> timeMinutes = hour * 60 + minute },
             start.hour,
             start.minute,
             true,
         ).show()
     }
 
-    fun toggleDay(day: DayOfWeek) {
-        val newDays = repeatDays xor Recurrence.bit(day)
-        val at = reminderAt
-        if (newDays != 0 && at != null) {
-            val t = currentTime()
-            reminderAt = nextRepeat(newDays, t.hour, t.minute)
+    /** Cuándo avisar, según lo elegido. */
+    fun reminderAt(): Long? {
+        val t = time ?: return null
+        return if (repeating) {
+            Recurrence.next(System.currentTimeMillis(), repeatDays, t.hour, t.minute)
+        } else {
+            // Sin día pero con hora: se entiende que es hoy.
+            val d = date ?: LocalDate.now()
+            d.atTime(t).atZone(zone).toInstant().toEpochMilli()
         }
-        repeatDays = newDays
     }
 
-    val repeating = repeatDays != 0
-    val inPast = !repeating && reminderAt?.let { it <= System.currentTimeMillis() } == true
+    val at = reminderAt()
+    val inPast = !repeating && at != null && at <= System.currentTimeMillis()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -138,31 +137,62 @@ internal fun TaskDialog(
                     modifier = Modifier.fillMaxWidth(),
                 )
 
-                Text("Repetir los días", style = MaterialTheme.typography.labelLarge)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    DayOfWeek.entries.forEach { day ->
-                        DayToggle(
-                            letter = Recurrence.dayLetters[day.value - 1],
-                            selected = Recurrence.has(repeatDays, day),
-                            onClick = { toggleDay(day) },
-                        )
+                Text("Prioridad", style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(
+                        Priority.FIRST to "Primero",
+                        Priority.NORMAL to "Normal",
+                        Priority.LAST to "Al final",
+                    ).forEach { (value, label) ->
+                        OptionChip(label, selected = priority == value, onClick = { priority = value })
                     }
                 }
 
-                val at = reminderAt
-                Text(
-                    text = when {
-                        repeating && at == null -> "Elige la hora para que te avise"
-                        repeating && at != null -> "🔁 Cada ${Recurrence.describe(repeatDays)} a las " +
-                            formatTime(at) + "\nPróxima vez: " + formatReminder(at)
-                        at != null -> "⏰ " + formatReminder(at)
-                        else -> "Sin recordatorio"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                if (showDay) {
+                    Text("Repetir los días", style = MaterialTheme.typography.labelLarge)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        DayOfWeek.entries.forEach { day ->
+                            DayToggle(
+                                letter = Recurrence.dayLetters[day.value - 1],
+                                selected = Recurrence.has(repeatDays, day),
+                                onClick = { repeatDays = repeatDays xor Recurrence.bit(day) },
+                            )
+                        }
+                    }
+                    if (repeating) {
+                        Text(
+                            "🔁 Cada ${Recurrence.describe(repeatDays)}",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "📅 " + (date?.let { formatDay(it) } ?: "Sin día"),
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(onClick = { pickDate() }) { Text("Cambiar") }
+                            if (date != null) {
+                                TextButton(onClick = { dateText = null }) { Text("Quitar") }
+                            }
+                        }
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (time != null) "⏰ Aviso a las " + time.format(HOUR) else "Sin aviso",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { pickTime() }) { Text(if (time == null) "Poner hora" else "Cambiar") }
+                    if (time != null) {
+                        TextButton(onClick = { timeMinutes = -1 }) { Text("Quitar") }
+                    }
+                }
                 if (inPast) {
                     Text(
                         "Esa hora ya ha pasado, no sonará.",
@@ -170,31 +200,20 @@ internal fun TaskDialog(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
-                Row {
-                    TextButton(onClick = { if (repeating) pickTime() else pickDateTime() }) {
-                        Text(
-                            when {
-                                reminderAt != null -> "Cambiar hora"
-                                repeating -> "Elegir hora"
-                                else -> "Poner día y hora"
-                            }
-                        )
-                    }
-                    if (reminderAt != null || repeating) {
-                        Spacer(Modifier.width(8.dp))
-                        TextButton(onClick = { reminderAt = null; repeatDays = 0 }) { Text("Quitar") }
-                    }
-                }
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
                     onSave(
-                        title,
-                        reminderAt,
-                        if (reminderAt == null) 0 else repeatDays,
-                        minutesText.toIntOrNull()?.takeIf { it > 0 },
+                        TaskForm(
+                            title = title,
+                            reminderAt = reminderAt(),
+                            repeatDays = if (showDay) repeatDays else 0,
+                            minutes = minutesText.toIntOrNull()?.takeIf { it > 0 },
+                            priority = priority,
+                            date = if (showDay && !repeating) (date ?: if (time != null) LocalDate.now() else null)?.toString() else null,
+                        )
                     )
                 },
                 enabled = title.isNotBlank(),
@@ -206,6 +225,28 @@ internal fun TaskDialog(
             TextButton(onClick = onDismiss) { Text("Cancelar") }
         },
     )
+}
+
+private val HOUR = DateTimeFormatter.ofPattern("HH:mm")
+private val DAY = DateTimeFormatter.ofPattern("EEEE d 'de' MMMM", Locale.forLanguageTag("es-ES"))
+
+private fun formatDay(date: LocalDate): String = date.format(DAY)
+
+/** Botón redondeado para elegir una opción (prioridad). */
+@Composable
+private fun OptionChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.clickable(onClick = onClick),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+        )
+    }
 }
 
 /** Circulito con la letra del día (L, M, X...), marcado o no. */
@@ -231,6 +272,8 @@ private fun DayToggle(letter: String, selected: Boolean, onClick: () -> Unit) {
 internal fun TeamDialog(
     savedNames: List<String>,
     onDismiss: () -> Unit,
+    title: String = "¿Quién está hoy?",
+    dismissLabel: String = "Cancelar",
     onSplit: (allNames: List<String>, present: List<String>) -> Unit,
 ) {
     var names by remember { mutableStateOf(savedNames) }
@@ -247,7 +290,7 @@ internal fun TeamDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("¿Quién está hoy?") },
+        title = { Text(title) },
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -295,7 +338,7 @@ internal fun TeamDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancelar") }
+            TextButton(onClick = onDismiss) { Text(dismissLabel) }
         },
     )
 }

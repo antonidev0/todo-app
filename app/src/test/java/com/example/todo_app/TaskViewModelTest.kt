@@ -2,6 +2,7 @@ package com.example.todo_app
 
 import androidx.lifecycle.SavedStateHandle
 import com.example.todo_app.data.Task
+import com.example.todo_app.data.TaskForm
 import com.example.todo_app.data.TaskRepository
 import com.example.todo_app.ui.TaskUiState
 import com.example.todo_app.ui.TaskViewModel
@@ -21,6 +22,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.time.LocalDate
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TaskViewModelTest {
@@ -39,7 +41,14 @@ class TaskViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun viewModel(saved: SavedStateHandle = SavedStateHandle()) = TaskViewModel(repo, team, saved)
+    private val today = LocalDate.of(2026, 11, 23)
+
+    private fun viewModel(saved: SavedStateHandle = SavedStateHandle()) =
+        TaskViewModel(repo, team, saved, clock = { today })
+
+    /** Tarea de hoy, para que salga en la lista del día. */
+    private fun todayTask(id: String, title: String, minutes: Int? = null) =
+        Task(id = id, title = title, date = today.toString(), minutes = minutes)
 
     /** uiState solo se calcula mientras alguien lo observa, como hace la pantalla. */
     private fun TestScope.observe(state: StateFlow<TaskUiState>): StateFlow<TaskUiState> {
@@ -49,7 +58,7 @@ class TaskViewModelTest {
 
     @Test
     fun empiezaCargandoYLuegoEnseñaLasTareas() = runTest {
-        dao.insert(Task(id = "a", title = "Comprar pan"))
+        dao.insert(todayTask("a", "Comprar pan"))
         val vm = viewModel()
         assertTrue(vm.uiState.value.loading)
 
@@ -61,7 +70,7 @@ class TaskViewModelTest {
 
     @Test
     fun abrirUnaTareaEnseñaSusSubtareasYSeGuarda() = runTest {
-        val padre = Task(id = "padre", title = "Cierre")
+        val padre = todayTask("padre", "Cierre")
         dao.insert(padre)
         dao.insert(Task(id = "hija", parentId = "padre", title = "Barrer"))
         val saved = SavedStateHandle()
@@ -81,7 +90,7 @@ class TaskViewModelTest {
 
     @Test
     fun volverAtrasRegresaALaListaPrincipal() = runTest {
-        val padre = Task(id = "padre", title = "Cierre")
+        val padre = todayTask("padre", "Cierre")
         dao.insert(padre)
         val vm = viewModel()
         val state = observe(vm.uiState)
@@ -95,7 +104,7 @@ class TaskViewModelTest {
 
     @Test
     fun borrarLaTareaAbiertaSaleDeElla() = runTest {
-        val padre = Task(id = "padre", title = "Cierre")
+        val padre = todayTask("padre", "Cierre")
         dao.insert(padre)
         val vm = viewModel()
         val state = observe(vm.uiState)
@@ -113,7 +122,7 @@ class TaskViewModelTest {
         val vm = viewModel()
         val state = observe(vm.uiState)
 
-        vm.add("Tarea", reminderAt = null, repeatDays = 0, minutes = null)
+        vm.add(TaskForm("Tarea"))
         assertEquals("No se pudo guardar la tarea", state.value.error)
 
         vm.errorShown()
@@ -122,7 +131,7 @@ class TaskViewModelTest {
 
     @Test
     fun repartirEnseñaElRepartoYCerrarloLoQuita() = runTest {
-        val padre = Task(id = "padre", title = "Cierre")
+        val padre = todayTask("padre", "Cierre")
         dao.insert(padre)
         dao.insert(Task(id = "hija", parentId = "padre", title = "Barrer", minutes = 10))
         val vm = viewModel()
@@ -145,5 +154,57 @@ class TaskViewModelTest {
 
         assertEquals(listOf("Ana", "Luis"), team.names)
         assertEquals(listOf("Ana", "Luis"), state.value.team)
+    }
+
+    @Test
+    fun cadaDiaEnseñaSusTareas() = runTest {
+        dao.insert(todayTask("hoy", "Hoy"))
+        dao.insert(Task(id = "mañana", title = "Mañana", date = today.plusDays(1).toString()))
+        dao.insert(Task(id = "sin-dia", title = "Sin día"))
+        val vm = viewModel()
+        val state = observe(vm.uiState)
+
+        assertEquals(listOf("hoy"), state.value.tasks.map { it.task.id })
+        vm.selectDate(today.plusDays(1))
+        assertEquals(listOf("mañana"), state.value.tasks.map { it.task.id })
+        vm.selectDate(null)
+        assertEquals(listOf("sin-dia"), state.value.tasks.map { it.task.id })
+    }
+
+    @Test
+    fun marcarHechaUnaTareaDiariaSoloLaMarcaEseDia() = runTest {
+        dao.insert(Task(id = "diaria", title = "Limpiar máquina", repeatDays = 0b1111111))
+        val vm = viewModel()
+        val state = observe(vm.uiState)
+
+        vm.toggleDone(state.value.tasks.single())
+        assertTrue(state.value.tasks.single().done)
+
+        vm.selectDate(today.plusDays(1))
+        assertFalse(state.value.tasks.single().done)
+    }
+
+    @Test
+    fun preguntaQuienEstaHoyYRepartirLoQuita() = runTest {
+        dao.insert(todayTask("a", "Barrer", minutes = 10))
+        dao.insert(todayTask("b", "Vasos", minutes = 10))
+        val vm = viewModel()
+        val state = observe(vm.uiState)
+        assertTrue(state.value.askTeamToday)
+
+        vm.answerTeamToday(listOf("Ana", "Luis"), listOf("Ana", "Luis"))
+
+        assertFalse(state.value.askTeamToday)
+        assertEquals(today.toString(), team.asked)
+        assertEquals(2, state.value.split?.size)
+        // Un ViewModel nuevo el mismo día ya no pregunta.
+        assertFalse(observe(viewModel().uiState).value.askTeamToday)
+    }
+
+    @Test
+    fun noPreguntaSiNoHayTrabajoQueRepartir() = runTest {
+        dao.insert(todayTask("a", "Solo una"))
+        val state = observe(viewModel().uiState)
+        assertFalse(state.value.askTeamToday)
     }
 }
