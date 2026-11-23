@@ -43,6 +43,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,6 +66,7 @@ import java.util.Locale
 @Composable
 fun TaskScreen(vm: TaskViewModel, topBanner: @Composable () -> Unit = {}) {
     val state by vm.uiState.collectAsStateWithLifecycle()
+    var showAssistant by rememberSaveable { mutableStateOf(false) }
 
     // El reconocimiento de voz del móvil (normalmente el de Google): escucha y devuelve el texto.
     val voice = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -102,9 +104,14 @@ fun TaskScreen(vm: TaskViewModel, topBanner: @Composable () -> Unit = {}) {
         onCloseSplit = vm::closeSplit,
         onErrorShown = vm::errorShown,
         onVoice = listen,
+        onAssistant = { showAssistant = true },
         onUndo = vm::undoVoice,
         onNoticeShown = vm::noticeShown,
     )
+
+    if (showAssistant) {
+        AssistantDialog(onDismiss = { showAssistant = false }, onError = vm::showError)
+    }
 }
 
 /** El idioma del móvil si es español (es-ES, es-MX...); si no, español de España. */
@@ -138,6 +145,8 @@ fun TaskContent(
     onVoice: () -> Unit = {},
     onUndo: (taskId: String) -> Unit = {},
     onNoticeShown: () -> Unit = {},
+    /** Abrir el asistente con IA. */
+    onAssistant: () -> Unit = {},
     topBanner: @Composable () -> Unit = {},
 ) {
     var editing by remember { mutableStateOf<TaskEditor?>(null) }
@@ -186,6 +195,7 @@ fun TaskContent(
                     }
                 },
                 actions = {
+                    TextButton(onClick = onAssistant) { Text("🤖") }
                     if (state.canSplit) {
                         TextButton(onClick = { choosingTeam = true }) { Text("👥 Repartir") }
                     }

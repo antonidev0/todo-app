@@ -12,10 +12,16 @@
     <!-- Volver a programar los recordatorios después de reiniciar el móvil -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- Para poder abrir el reconocimiento de voz del móvil (el botón 🎤) -->
+    <!-- El asistente habla con Claude por internet -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Para abrir el reconocimiento de voz del móvil (🎤) y usar su voz para leer las respuestas -->
     <queries>
         <intent>
             <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
     </queries>
 

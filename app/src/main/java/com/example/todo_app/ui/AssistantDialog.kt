@@ -1,0 +1,271 @@
+package com.example.todo_app.ui
+
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
+import android.speech.RecognizerIntent
+import android.speech.tts.TextToSpeech
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.todo_app.assistant.AssistantUiState
+import com.example.todo_app.assistant.AssistantViewModel
+import com.example.todo_app.assistant.ChatLine
+import java.util.Locale
+
+/** El asistente a pantalla completa: se le habla o se le escribe y contesta en voz alta. */
+@Composable
+fun AssistantDialog(onDismiss: () -> Unit, onError: (String) -> Unit) {
+    val vm: AssistantViewModel = viewModel(factory = AssistantViewModel.Factory)
+    val state by vm.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+
+    // Voz del móvil para leer las respuestas.
+    var tts by remember { mutableStateOf<TextToSpeech?>(null) }
+    DisposableEffect(Unit) {
+        var engine: TextToSpeech? = null
+        engine = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                engine?.language = Locale.getDefault().takeIf { it.language == "es" } ?: Locale.forLanguageTag("es-ES")
+                tts = engine
+            }
+        }
+        onDispose {
+            engine?.stop()
+            engine?.shutdown()
+            tts = null
+        }
+    }
+    LaunchedEffect(state.toSpeak, tts) {
+        val line = state.toSpeak ?: return@LaunchedEffect
+        tts?.speak(line.text, TextToSpeech.QUEUE_FLUSH, null, "respuesta-${line.id}")
+        vm.spoken()
+    }
+
+    val voice = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let(vm::send)
+    }
+    val listen = {
+        tts?.stop()
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().takeIf { it.language == "es" }?.toLanguageTag() ?: "es-ES")
+            .putExtra(RecognizerIntent.EXTRA_PROMPT, "Dime qué necesitas")
+        try {
+            voice.launch(intent)
+        } catch (e: ActivityNotFoundException) {
+            onError("Este móvil no tiene reconocimiento de voz. Instala o activa la app de Google.")
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+    ) {
+        AssistantContent(
+            state = state,
+            onClose = onDismiss,
+            onSend = vm::send,
+            onListen = listen,
+            onToggleSpeak = { tts?.stop(); vm.toggleSpeak() },
+            onNewConversation = { tts?.stop(); vm.newConversation() },
+            onSaveKey = vm::saveKey,
+            onRemoveKey = vm::removeKey,
+            onOpenConsole = {
+                runCatching {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://console.anthropic.com/settings/keys")))
+                }
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun AssistantContent(
+    state: AssistantUiState,
+    onClose: () -> Unit,
+    onSend: (String) -> Unit,
+    onListen: () -> Unit,
+    onToggleSpeak: () -> Unit,
+    onNewConversation: () -> Unit,
+    onSaveKey: (String) -> Unit,
+    onRemoveKey: () -> Unit,
+    onOpenConsole: () -> Unit,
+) {
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+    Scaffold(
+        modifier = Modifier.fillMaxSize().imePadding(),
+        topBar = {
+            TopAppBar(
+                title = { Text("Asistente") },
+                navigationIcon = { TextButton(onClick = onClose) { Text("✕") } },
+                actions = {
+                    if (state.hasKey) {
+                        TextButton(onClick = onToggleSpeak) { Text(if (state.speak) "🔊" else "🔇") }
+                        TextButton(onClick = onNewConversation) { Text("Nueva") }
+                        TextButton(onClick = { showSettings = !showSettings }) { Text("⚙") }
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        Column(Modifier.padding(padding).fillMaxSize()) {
+            when {
+                !state.hasKey -> KeySetup(onSaveKey, onOpenConsole)
+                showSettings -> KeySettings(onRemoveKey = { onRemoveKey(); showSettings = false }, onBack = { showSettings = false })
+                else -> Chat(state, onSend, onListen)
+            }
+        }
+    }
+}
+
+@Composable
+private fun Chat(state: AssistantUiState, onSend: (String) -> Unit, onListen: () -> Unit) {
+    var text by rememberSaveable { mutableStateOf("") }
+    val listState = rememberLazyListState()
+    LaunchedEffect(state.lines.size) {
+        if (state.lines.isNotEmpty()) listState.animateScrollToItem(state.lines.size - 1)
+    }
+    Column(Modifier.fillMaxSize()) {
+        if (state.lines.isEmpty()) {
+            Box(Modifier.weight(1f).fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                Text(
+                    "Pulsa 🎤 y dime, por ejemplo:\n«¿Qué tengo mañana?»\n«Añade comprar pan a las seis»\n«Ya he llamado a Luis»",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
+            ) {
+                items(state.lines, key = { it.id }) { Bubble(it) }
+            }
+        }
+        if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        Row(
+            Modifier.fillMaxWidth().padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                placeholder = { Text("Escribe o pulsa 🎤") },
+                modifier = Modifier.weight(1f),
+                maxLines = 4,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = {
+                    if (!state.busy) { onSend(text); text = "" }
+                }),
+            )
+            if (text.isBlank()) {
+                Button(onClick = onListen, enabled = !state.busy) { Text("🎤") }
+            } else {
+                Button(onClick = { onSend(text); text = "" }, enabled = !state.busy) { Text("Enviar") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Bubble(line: ChatLine) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (line.fromUser) Arrangement.End else Arrangement.Start) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = when {
+                line.isError -> MaterialTheme.colorScheme.errorContainer
+                line.fromUser -> MaterialTheme.colorScheme.primaryContainer
+                else -> MaterialTheme.colorScheme.surfaceVariant
+            },
+            modifier = Modifier.widthIn(max = 300.dp),
+        ) {
+            Text(line.text, Modifier.padding(horizontal = 14.dp, vertical = 10.dp), style = MaterialTheme.typography.bodyLarge)
+        }
+    }
+}
+
+@Composable
+private fun KeySetup(onSaveKey: (String) -> Unit, onOpenConsole: () -> Unit) {
+    var key by rememberSaveable { mutableStateOf("") }
+    Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Conectar con Claude", style = MaterialTheme.typography.titleLarge)
+        Text(
+            "El asistente usa Claude por internet. Necesitas una clave de API de Anthropic: " +
+                "créala en console.anthropic.com (Settings → API keys) y pégala aquí. " +
+                "Cada pregunta cuesta muy poco, y se cobra de tu saldo en Anthropic.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text(
+            "La clave se guarda solo en este móvil y no se incluye en las copias de seguridad.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        TextButton(onClick = onOpenConsole) { Text("Abrir console.anthropic.com") }
+        OutlinedTextField(
+            value = key,
+            onValueChange = { key = it.trim() },
+            label = { Text("Clave (empieza por sk-ant-)") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(onClick = { onSaveKey(key) }, enabled = key.startsWith("sk-ant-")) { Text("Guardar") }
+    }
+}
+
+@Composable
+private fun KeySettings(onRemoveKey: () -> Unit, onBack: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Clave de Claude", style = MaterialTheme.typography.titleLarge)
+        Text("Hay una clave guardada en este móvil.", style = MaterialTheme.typography.bodyMedium)
+        Button(onClick = onRemoveKey) { Text("Quitar la clave") }
+        TextButton(onClick = onBack) { Text("Volver") }
+    }
+}
