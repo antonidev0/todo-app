@@ -1,0 +1,41 @@
+# Compila la app en GitHub y deja el APK de prueba para descargar,
+# sin necesidad de encender el PC.
+name: APK de prueba
+
+on:
+  push:
+    branches: [master, "claude/**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Tests y APK
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest assembleDebug --console=plain
+
+      - name: Guardar el APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Guardar los resultados de los tests si fallan
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resultados-tests
+          path: app/build/reports/tests/
