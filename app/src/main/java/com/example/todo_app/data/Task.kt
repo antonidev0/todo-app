@@ -28,8 +28,16 @@ data class Task(
     val notes: String = "",
     val done: Boolean = false,
     val completedAt: Long? = null,
-    /** Momento del recordatorio en milisegundos (epoch), o null si no tiene. */
+    /**
+     * Momento del próximo recordatorio en milisegundos (epoch), o null si no tiene.
+     * En las tareas que se repiten es siempre la próxima vez que toca.
+     */
     val reminderAt: Long? = null,
+    /**
+     * Días de la semana en que se repite, como bits: lunes = 1, martes = 2, miércoles = 4...
+     * domingo = 64. 0 = no se repite. Ver [Recurrence].
+     */
+    @ColumnInfo(defaultValue = "0") val repeatDays: Int = 0,
     val position: Int = 0,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
@@ -37,6 +45,8 @@ data class Task(
 )
 
 /** Una tarea junto con cuántas subtareas directas tiene y cuántas están hechas. */
+val Task.isRecurring: Boolean get() = repeatDays != 0 && reminderAt != null
+
 data class TaskWithCounts(
     @Embedded val task: Task,
     @ColumnInfo(name = "childCount") val childCount: Int,

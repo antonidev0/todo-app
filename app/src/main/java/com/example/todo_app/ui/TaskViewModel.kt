@@ -48,15 +48,15 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
         path.value = path.value.dropLast(1)
     }
 
-    fun add(title: String, reminderAt: Long?) {
+    fun add(title: String, reminderAt: Long?, repeatDays: Int) {
         if (title.isBlank()) return
         val parentId = path.value.lastOrNull()
-        viewModelScope.launch { repo.addTask(parentId, title, reminderAt) }
+        viewModelScope.launch { repo.addTask(parentId, title, reminderAt, repeatDays) }
     }
 
-    fun edit(task: Task, title: String, reminderAt: Long?) {
+    fun edit(task: Task, title: String, reminderAt: Long?, repeatDays: Int) {
         if (title.isBlank()) return
-        viewModelScope.launch { repo.editTask(task, title, reminderAt) }
+        viewModelScope.launch { repo.editTask(task, title, reminderAt, repeatDays) }
     }
 
     fun toggleDone(task: Task) {

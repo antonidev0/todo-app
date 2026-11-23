@@ -12,11 +12,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
@@ -27,6 +28,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -42,8 +44,10 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.todo_app.data.Recurrence
 import com.example.todo_app.data.Task
 import com.example.todo_app.data.TaskWithCounts
+import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -124,9 +128,11 @@ fun TaskScreen(vm: TaskViewModel, topBanner: @Composable () -> Unit = {}) {
             },
             initialTitle = task.title,
             initialReminder = task.reminderAt,
+            initialRepeatDays = task.repeatDays,
             onDismiss = { editing = null },
-            onSave = { title, reminderAt ->
-                if (isNew) vm.add(title, reminderAt) else vm.edit(task, title, reminderAt)
+            onSave = { title, reminderAt, repeatDays ->
+                if (isNew) vm.add(title, reminderAt, repeatDays)
+                else vm.edit(task, title, reminderAt, repeatDays)
                 editing = null
             },
         )
@@ -178,7 +184,12 @@ private fun TaskRow(
             )
             val details = buildList {
                 if (item.childCount > 0) add("${item.doneChildCount}/${item.childCount} subtareas")
-                task.reminderAt?.let { add("⏰ " + formatReminder(it)) }
+                val at = task.reminderAt
+                when {
+                    at != null && task.repeatDays != 0 ->
+                        add("🔁 " + Recurrence.describe(task.repeatDays) + " · " + formatTime(at))
+                    at != null -> add("⏰ " + formatReminder(at))
+                }
             }
             if (details.isNotEmpty()) {
                 Text(
@@ -208,17 +219,25 @@ private fun TaskDialog(
     heading: String,
     initialTitle: String,
     initialReminder: Long?,
+    initialRepeatDays: Int,
     onDismiss: () -> Unit,
-    onSave: (String, Long?) -> Unit,
+    onSave: (String, Long?, Int) -> Unit,
 ) {
     val context = LocalContext.current
     var title by remember { mutableStateOf(initialTitle) }
     var reminderAt by remember { mutableStateOf(initialReminder) }
+    var repeatDays by remember { mutableStateOf(initialRepeatDays) }
 
+    fun currentTime(): LocalDateTime = reminderAt?.let {
+        LocalDateTime.ofInstant(Instant.ofEpochMilli(it), ZoneId.systemDefault())
+    } ?: LocalDateTime.now().plusHours(1).withMinute(0)
+
+    fun nextRepeat(days: Int, hour: Int, minute: Int): Long? =
+        Recurrence.next(System.currentTimeMillis(), days, hour, minute)
+
+    /** Tarea de una sola vez: elegir día y hora. */
     fun pickDateTime() {
-        val start = reminderAt?.let {
-            LocalDateTime.ofInstant(Instant.ofEpochMilli(it), ZoneId.systemDefault())
-        } ?: LocalDateTime.now().plusHours(1).withMinute(0)
+        val start = currentTime()
         DatePickerDialog(
             context,
             { _, year, month, day ->
@@ -239,7 +258,30 @@ private fun TaskDialog(
         ).apply { datePicker.minDate = System.currentTimeMillis() - 1000 }.show()
     }
 
-    val inPast = reminderAt?.let { it <= System.currentTimeMillis() } == true
+    /** Tarea que se repite: solo hace falta la hora. */
+    fun pickTime() {
+        val start = currentTime()
+        TimePickerDialog(
+            context,
+            { _, hour, minute -> reminderAt = nextRepeat(repeatDays, hour, minute) },
+            start.hour,
+            start.minute,
+            true,
+        ).show()
+    }
+
+    fun toggleDay(day: DayOfWeek) {
+        val newDays = repeatDays xor Recurrence.bit(day)
+        val at = reminderAt
+        if (newDays != 0 && at != null) {
+            val t = currentTime()
+            reminderAt = nextRepeat(newDays, t.hour, t.minute)
+        }
+        repeatDays = newDays
+    }
+
+    val repeating = repeatDays != 0
+    val inPast = !repeating && reminderAt?.let { it <= System.currentTimeMillis() } == true
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -253,8 +295,30 @@ private fun TaskDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
+
+                Text("Repetir los días", style = MaterialTheme.typography.labelLarge)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    DayOfWeek.entries.forEach { day ->
+                        DayToggle(
+                            letter = Recurrence.dayLetters[day.value - 1],
+                            selected = Recurrence.has(repeatDays, day),
+                            onClick = { toggleDay(day) },
+                        )
+                    }
+                }
+
+                val at = reminderAt
                 Text(
-                    text = reminderAt?.let { "⏰ " + formatReminder(it) } ?: "Sin recordatorio",
+                    text = when {
+                        repeating && at == null -> "Elige la hora para que te avise"
+                        repeating && at != null -> "🔁 Cada ${Recurrence.describe(repeatDays)} a las " +
+                            formatTime(at) + "\nPróxima vez: " + formatReminder(at)
+                        at != null -> "⏰ " + formatReminder(at)
+                        else -> "Sin recordatorio"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 if (inPast) {
@@ -265,19 +329,27 @@ private fun TaskDialog(
                     )
                 }
                 Row {
-                    TextButton(onClick = { pickDateTime() }) {
-                        Text(if (reminderAt == null) "Poner recordatorio" else "Cambiar hora")
+                    TextButton(onClick = { if (repeating) pickTime() else pickDateTime() }) {
+                        Text(
+                            when {
+                                reminderAt != null -> "Cambiar hora"
+                                repeating -> "Elegir hora"
+                                else -> "Poner día y hora"
+                            }
+                        )
                     }
-                    if (reminderAt != null) {
+                    if (reminderAt != null || repeating) {
                         Spacer(Modifier.width(8.dp))
-                        TextButton(onClick = { reminderAt = null }) { Text("Quitar") }
+                        TextButton(onClick = { reminderAt = null; repeatDays = 0 }) { Text("Quitar") }
                     }
                 }
-                Spacer(Modifier.height(4.dp))
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(title, reminderAt) }, enabled = title.isNotBlank()) {
+            TextButton(
+                onClick = { onSave(title, reminderAt, if (reminderAt == null) 0 else repeatDays) },
+                enabled = title.isNotBlank(),
+            ) {
                 Text("Guardar")
             }
         },
@@ -287,7 +359,27 @@ private fun TaskDialog(
     )
 }
 
+/** Circulito con la letra del día (L, M, X...), marcado o no. */
+@Composable
+private fun DayToggle(letter: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        shape = CircleShape,
+        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.size(34.dp).clickable(onClick = onClick),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(letter, style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}
+
 private val reminderFormat = DateTimeFormatter.ofPattern("EEE d MMM, HH:mm", Locale.forLanguageTag("es-ES"))
+
+private val timeFormat = DateTimeFormatter.ofPattern("HH:mm")
 
 private fun formatReminder(millis: Long): String =
     LocalDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneId.systemDefault()).format(reminderFormat)
+
+private fun formatTime(millis: Long): String =
+    LocalDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneId.systemDefault()).format(timeFormat)

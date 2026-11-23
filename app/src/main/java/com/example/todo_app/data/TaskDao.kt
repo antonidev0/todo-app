@@ -18,7 +18,7 @@ interface TaskDao {
             (SELECT COUNT(*) FROM tasks c WHERE c.parentId = t.id AND c.deletedAt IS NULL AND c.done = 1) AS doneChildCount
         FROM tasks t
         WHERE t.parentId IS :parentId AND t.deletedAt IS NULL
-        ORDER BY t.done ASC, t.position ASC, t.createdAt ASC
+        ORDER BY t.done ASC, t.reminderAt IS NULL, t.reminderAt ASC, t.position ASC, t.createdAt ASC
         """
     )
     fun observeChildren(parentId: String?): Flow<List<TaskWithCounts>>
@@ -45,9 +45,15 @@ interface TaskDao {
     @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM tasks WHERE parentId IS :parentId")
     suspend fun nextPosition(parentId: String?): Int
 
-    /** Tareas pendientes con recordatorio en el futuro (para reprogramarlas al reiniciar). */
-    @Query("SELECT * FROM tasks WHERE reminderAt > :now AND done = 0 AND deletedAt IS NULL")
-    suspend fun getUpcomingReminders(now: Long): List<Task>
+    /** Tareas con recordatorio pendiente o que se repiten (para reprogramarlas al reiniciar). */
+    @Query(
+        """
+        SELECT * FROM tasks
+        WHERE deletedAt IS NULL AND reminderAt IS NOT NULL
+            AND (repeatDays != 0 OR (done = 0 AND reminderAt > :now))
+        """
+    )
+    suspend fun getActiveReminders(now: Long): List<Task>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(task: Task)
