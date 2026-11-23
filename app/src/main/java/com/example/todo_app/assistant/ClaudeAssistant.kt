@@ -137,17 +137,24 @@ class ClaudeAssistant(
         .messages(history.toList())
         .build()
 
-    private fun explain(e: Exception): Exception = when (e) {
-        is AssistantException -> e
-        is UnauthorizedException, is PermissionDeniedException ->
-            AssistantException("La clave de Claude no es válida. Revísala en los ajustes del asistente.", e)
-        is RateLimitException, is OverloadedException ->
-            AssistantException("Claude está saturado ahora mismo. Prueba otra vez en un momento.", e)
-        is AnthropicIoException -> AssistantException("No hay conexión a internet.", e)
-        is AnthropicServiceException if e.statusCode() == 402 ->
-            AssistantException("Tu cuenta de Anthropic no tiene saldo. Añade crédito en console.anthropic.com.", e)
-        is AnthropicServiceException -> AssistantException("Claude ha dado un error (${e.statusCode()}). Prueba otra vez.", e)
-        else -> AssistantException("Algo ha fallado: ${e.message ?: e.javaClass.simpleName}", e)
+    private fun explain(e: Exception): Exception {
+        // El motivo que da la API, por ejemplo «Your credit balance is too low...».
+        val detail = (e as? AnthropicServiceException)?.apiMessage()?.orElse(null).orEmpty()
+        val message = when {
+            e is AssistantException -> return e
+            detail.contains("credit balance", ignoreCase = true) ||
+                (e is AnthropicServiceException && e.statusCode() == 402) ->
+                "Tu cuenta de Anthropic no tiene saldo. Añade crédito en console.anthropic.com → Billing y vuelve a probar."
+            e is UnauthorizedException || e is PermissionDeniedException ->
+                "La clave de Claude no es válida. Revísala en los ajustes del asistente (⚙)."
+            e is RateLimitException || e is OverloadedException ->
+                "Claude está saturado ahora mismo. Prueba otra vez en un momento."
+            e is AnthropicIoException -> "No hay conexión a internet."
+            e is AnthropicServiceException ->
+                "Claude ha dado un error ${e.statusCode()}" + (if (detail.isNotEmpty()) ": $detail" else ". Prueba otra vez.")
+            else -> "Algo ha fallado: ${e.message ?: e.javaClass.simpleName}"
+        }
+        return AssistantException(message, e)
     }
 
     companion object {

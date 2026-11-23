@@ -95,4 +95,31 @@ class ClaudeAssistantTest {
         assertEquals("claude-opus-5-5", sent.last().model().asString())
         assertTrue(sent.last()._additionalBodyProperties().containsKey("fallbacks"))
     }
+
+    private fun badRequest(text: String) = com.anthropic.errors.BadRequestException.builder()
+        .headers(com.anthropic.core.http.Headers.builder().build())
+        .body(
+            com.anthropic.core.JsonValue.from(
+                mapOf("type" to "error", "error" to mapOf("type" to "invalid_request_error", "message" to text))
+            )
+        )
+        .build()
+
+    private fun errorFor(e: Exception): String? = runBlocking {
+        try {
+            ClaudeAssistant({ throw e }, tools, AssistantModel.HAIKU, { now }, Dispatchers.Unconfined).ask("hola")
+            null
+        } catch (ex: AssistantException) {
+            ex.message
+        }
+    }
+
+    @Test
+    fun explicaElMotivoDeUnError400() {
+        assertEquals(
+            "Tu cuenta de Anthropic no tiene saldo. Añade crédito en console.anthropic.com → Billing y vuelve a probar.",
+            errorFor(badRequest("Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing.")),
+        )
+        assertEquals("Claude ha dado un error 400: algo raro", errorFor(badRequest("algo raro")))
+    }
 }
