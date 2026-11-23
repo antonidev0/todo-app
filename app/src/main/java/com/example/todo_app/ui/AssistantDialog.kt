@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,6 +28,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -50,6 +52,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.todo_app.assistant.AssistantModel
 import com.example.todo_app.assistant.AssistantUiState
 import com.example.todo_app.assistant.AssistantViewModel
 import com.example.todo_app.assistant.ChatLine
@@ -113,6 +116,7 @@ fun AssistantDialog(onDismiss: () -> Unit, onError: (String) -> Unit) {
             onNewConversation = { tts?.stop(); vm.newConversation() },
             onSaveKey = vm::saveKey,
             onRemoveKey = vm::removeKey,
+            onChooseModel = vm::chooseModel,
             onOpenConsole = {
                 runCatching {
                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://console.anthropic.com/settings/keys")))
@@ -134,13 +138,14 @@ internal fun AssistantContent(
     onSaveKey: (String) -> Unit,
     onRemoveKey: () -> Unit,
     onOpenConsole: () -> Unit,
+    onChooseModel: (AssistantModel) -> Unit,
 ) {
     var showSettings by rememberSaveable { mutableStateOf(false) }
     Scaffold(
         modifier = Modifier.fillMaxSize().imePadding(),
         topBar = {
             TopAppBar(
-                title = { Text("Asistente") },
+                title = { Text(if (state.hasKey) "Asistente · ${state.model.label}" else "Asistente") },
                 navigationIcon = { TextButton(onClick = onClose) { Text("✕") } },
                 actions = {
                     if (state.hasKey) {
@@ -155,7 +160,12 @@ internal fun AssistantContent(
         Column(Modifier.padding(padding).fillMaxSize()) {
             when {
                 !state.hasKey -> KeySetup(onSaveKey, onOpenConsole)
-                showSettings -> KeySettings(onRemoveKey = { onRemoveKey(); showSettings = false }, onBack = { showSettings = false })
+                showSettings -> Settings(
+                    model = state.model,
+                    onChooseModel = onChooseModel,
+                    onRemoveKey = { onRemoveKey(); showSettings = false },
+                    onBack = { showSettings = false },
+                )
                 else -> Chat(state, onSend, onListen)
             }
         }
@@ -261,8 +271,27 @@ private fun KeySetup(onSaveKey: (String) -> Unit, onOpenConsole: () -> Unit) {
 }
 
 @Composable
-private fun KeySettings(onRemoveKey: () -> Unit, onBack: () -> Unit) {
+private fun Settings(
+    model: AssistantModel,
+    onChooseModel: (AssistantModel) -> Unit,
+    onRemoveKey: () -> Unit,
+    onBack: () -> Unit,
+) {
     Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Modelo", style = MaterialTheme.typography.titleLarge)
+        AssistantModel.entries.forEach { option ->
+            Row(
+                Modifier.fillMaxWidth().selectable(selected = option == model, onClick = { onChooseModel(option) }),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(selected = option == model, onClick = { onChooseModel(option) })
+                Column(Modifier.padding(start = 8.dp)) {
+                    Text(option.label, style = MaterialTheme.typography.bodyLarge)
+                    Text(option.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        Text("Al cambiar de modelo empieza una conversación nueva.", style = MaterialTheme.typography.bodySmall)
         Text("Clave de Claude", style = MaterialTheme.typography.titleLarge)
         Text("Hay una clave guardada en este móvil.", style = MaterialTheme.typography.bodyMedium)
         Button(onClick = onRemoveKey) { Text("Quitar la clave") }

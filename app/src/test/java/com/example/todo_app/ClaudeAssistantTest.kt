@@ -5,6 +5,7 @@ import com.anthropic.errors.AnthropicIoException
 import com.anthropic.models.messages.Message
 import com.anthropic.models.messages.MessageCreateParams
 import com.example.todo_app.assistant.AssistantException
+import com.example.todo_app.assistant.AssistantModel
 import com.example.todo_app.assistant.ClaudeAssistant
 import com.example.todo_app.assistant.TaskTools
 import com.example.todo_app.data.TaskRepository
@@ -26,15 +27,15 @@ class ClaudeAssistantTest {
     private val sent = mutableListOf<MessageCreateParams>()
 
     private fun message(stop: String, vararg content: String): Message = jsonMapper().readValue(
-        """{"id":"msg_${sent.size}","type":"message","role":"assistant","model":"${ClaudeAssistant.MODEL}",
+        """{"id":"msg_${sent.size}","type":"message","role":"assistant","model":"claude-haiku-5-5",
             "content":[${content.joinToString(",")}],"stop_reason":"$stop","stop_sequence":null,
             "usage":{"input_tokens":10,"output_tokens":5}}""",
         Message::class.java,
     )
 
-    private fun assistant(vararg replies: Message): ClaudeAssistant {
+    private fun assistant(vararg replies: Message, model: AssistantModel = AssistantModel.OPUS): ClaudeAssistant {
         val queue = ArrayDeque(replies.toList())
-        return ClaudeAssistant({ sent += it; queue.removeFirst() }, tools, { now }, Dispatchers.Unconfined)
+        return ClaudeAssistant({ sent += it; queue.removeFirst() }, tools, model, { now }, Dispatchers.Unconfined)
     }
 
     @Test
@@ -71,7 +72,7 @@ class ClaudeAssistantTest {
             calls++
             if (calls == 1) throw AnthropicIoException("sin red")
             message("end_turn", """{"type":"text","text":"Hola."}""")
-        }, tools, { now }, Dispatchers.Unconfined)
+        }, tools, AssistantModel.HAIKU, { now }, Dispatchers.Unconfined)
 
         try {
             a.ask("hola")
@@ -80,5 +81,18 @@ class ClaudeAssistantTest {
             assertEquals("No hay conexión a internet.", e.message)
         }
         assertEquals("Hola.", a.ask("hola").text)
+    }
+
+    @Test
+    fun usaElModeloElegido() = runBlocking {
+        val reply = message("end_turn", """{"type":"text","text":"Vale."}""")
+        assistant(reply, model = AssistantModel.HAIKU).ask("hola")
+        assertEquals("claude-haiku-5-5", sent.last().model().asString())
+        // Haiku no admite el reintento en el servidor, así que no se manda.
+        assertFalse(sent.last()._additionalBodyProperties().containsKey("fallbacks"))
+
+        assistant(reply, model = AssistantModel.OPUS).ask("hola")
+        assertEquals("claude-opus-5-5", sent.last().model().asString())
+        assertTrue(sent.last()._additionalBodyProperties().containsKey("fallbacks"))
     }
 }

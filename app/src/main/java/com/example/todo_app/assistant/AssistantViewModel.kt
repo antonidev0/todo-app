@@ -26,15 +26,16 @@ data class AssistantUiState(
     val speak: Boolean = true,
     /** Respuesta nueva para leer en voz alta una vez, o null. */
     val toSpeak: ChatLine? = null,
+    val model: AssistantModel = AssistantModel.DEFAULT,
 )
 
 class AssistantViewModel(
     private val keyStore: ApiKeyStore,
-    /** Crea el asistente con una clave. */
-    private val newAssistant: (apiKey: String) -> ClaudeAssistant,
+    /** Crea el asistente con una clave y un modelo. */
+    private val newAssistant: (apiKey: String, model: AssistantModel) -> ClaudeAssistant,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(AssistantUiState(hasKey = keyStore.get() != null))
+    private val _state = MutableStateFlow(AssistantUiState(hasKey = keyStore.get() != null, model = keyStore.model()))
     val state: StateFlow<AssistantUiState> = _state.asStateFlow()
 
     private var assistant: ClaudeAssistant? = null
@@ -47,7 +48,7 @@ class AssistantViewModel(
         val clean = text.trim()
         if (clean.isEmpty() || _state.value.busy) return
         val key = keyStore.get() ?: return
-        val current = assistant ?: newAssistant(key).also { assistant = it }
+        val current = assistant ?: newAssistant(key, _state.value.model).also { assistant = it }
         _state.update { it.copy(lines = it.lines + line(clean, fromUser = true), busy = true) }
         viewModelScope.launch {
             val reply = try {
@@ -84,7 +85,15 @@ class AssistantViewModel(
     fun removeKey() {
         keyStore.set(null)
         assistant = null
-        _state.update { AssistantUiState(hasKey = false) }
+        _state.update { AssistantUiState(hasKey = false, model = it.model) }
+    }
+
+    /** Cambia de modelo. La conversación empieza de nuevo con el modelo elegido. */
+    fun chooseModel(model: AssistantModel) {
+        if (model == _state.value.model) return
+        keyStore.setModel(model)
+        assistant = null
+        _state.update { it.copy(model = model, lines = emptyList(), toSpeak = null) }
     }
 
     companion object {

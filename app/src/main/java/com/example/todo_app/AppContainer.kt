@@ -3,6 +3,7 @@ package com.example.todo_app
 import android.content.Context
 import com.anthropic.client.okhttp.AnthropicOkHttpClient
 import com.example.todo_app.assistant.ApiKeyStore
+import com.example.todo_app.assistant.AssistantModel
 import com.example.todo_app.assistant.ClaudeAssistant
 import com.example.todo_app.assistant.PrefsApiKeyStore
 import com.example.todo_app.assistant.TaskTools
@@ -33,10 +34,11 @@ class AppContainer(context: Context) {
 
     val apiKeyStore: ApiKeyStore by lazy { PrefsApiKeyStore(appContext) }
 
-    /** Un asistente nuevo que habla con Claude usando [apiKey]. */
-    fun newAssistant(apiKey: String): ClaudeAssistant = ClaudeAssistant(
+    /** Un asistente nuevo que habla con Claude usando [apiKey] y [model]. */
+    fun newAssistant(apiKey: String, model: AssistantModel): ClaudeAssistant = ClaudeAssistant(
         AnthropicOkHttpClient.builder().apiKey(apiKey).build(),
         TaskTools(taskRepository),
+        model,
     )
 }
 

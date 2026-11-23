@@ -26,6 +26,28 @@ import java.util.Locale
 /** La respuesta del asistente, y si ha cambiado alguna tarea. */
 data class AssistantReply(val text: String, val changedTasks: Boolean = false)
 
+/**
+ * Los modelos de Claude que se pueden elegir en los ajustes, del más barato al más listo.
+ * Precios por millón de tokens (entrada / salida); una pregunta normal usa unos pocos miles.
+ */
+enum class AssistantModel(
+    val id: String,
+    val label: String,
+    val description: String,
+    /** Haiku no tiene reintento automático en el servidor cuando rechaza algo. */
+    val serverFallback: Boolean,
+) {
+    HAIKU("claude-haiku-5-5", "Haiku 5.5", "El más rápido y barato (unos 0,1 céntimos por pregunta). Va sobrado para tareas sencillas.", false),
+    SONNET("claude-sonnet-5-5", "Sonnet 5.5", "Término medio (alrededor de 1 céntimo por pregunta).", true),
+    OPUS("claude-opus-5-5", "Opus 5.5", "El más listo y el más caro (unos 2 céntimos por pregunta).", true);
+
+    companion object {
+        val DEFAULT = OPUS
+
+        fun fromId(id: String?): AssistantModel = entries.firstOrNull { it.id == id } ?: DEFAULT
+    }
+}
+
 /** Un fallo que se puede enseñar tal cual a la persona. */
 class AssistantException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
@@ -40,10 +62,12 @@ class ClaudeAssistant(
     /** Hace la llamada a la API. En la app es el cliente de Anthropic; en los tests, uno falso. */
     private val createMessage: (MessageCreateParams) -> Message,
     private val tools: TaskTools,
+    private val model: AssistantModel = AssistantModel.DEFAULT,
     private val now: () -> LocalDateTime = { LocalDateTime.now() },
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
-    constructor(client: AnthropicClient, tools: TaskTools) : this({ client.messages().create(it) }, tools)
+    constructor(client: AnthropicClient, tools: TaskTools, model: AssistantModel) :
+        this({ client.messages().create(it) }, tools, model)
 
     private val history = mutableListOf<MessageParam>()
 
@@ -97,14 +121,18 @@ class ClaudeAssistant(
     }
 
     private fun params(): MessageCreateParams = MessageCreateParams.builder()
-        .model(MODEL)
+        .model(model.id)
         .maxTokens(8000L)
         .system(SYSTEM)
         // Respuestas rápidas: para tareas sencillas no hace falta pensar mucho.
         .outputConfig(OutputConfig.builder().effort(OutputConfig.Effort.LOW).build())
-        // Si el modelo rechaza algo por error, la API reintenta sola con otro modelo.
-        .putAdditionalHeader("anthropic-beta", "server-side-fallback-2026-07-01")
-        .putAdditionalBodyProperty("fallbacks", JsonValue.from("default"))
+        .apply {
+            if (model.serverFallback) {
+                // Si el modelo rechaza algo por error, la API reintenta sola con otro modelo.
+                putAdditionalHeader("anthropic-beta", "server-side-fallback-2026-07-01")
+                putAdditionalBodyProperty("fallbacks", JsonValue.from("default"))
+            }
+        }
         .tools(TOOLS.map { com.anthropic.models.messages.ToolUnion.ofTool(it) })
         .messages(history.toList())
         .build()
@@ -123,7 +151,6 @@ class ClaudeAssistant(
     }
 
     companion object {
-        const val MODEL = "claude-opus-5-5"
         private const val MAX_STEPS = 10
 
         private val NOW = DateTimeFormatter.ofPattern("EEEE d 'de' MMMM 'de' yyyy, HH:mm", Locale.forLanguageTag("es-ES"))

@@ -9,6 +9,10 @@ import android.content.Context
 interface ApiKeyStore {
     fun get(): String?
     fun set(key: String?)
+
+    /** Modelo elegido en los ajustes. */
+    fun model(): AssistantModel
+    fun setModel(model: AssistantModel)
 }
 
 /** [ApiKeyStore] sobre SharedPreferences privadas de la app. */
@@ -23,7 +27,14 @@ class PrefsApiKeyStore(context: Context) : ApiKeyStore {
         }.apply()
     }
 
+    override fun model(): AssistantModel = AssistantModel.fromId(prefs.getString(MODEL, null))
+
+    override fun setModel(model: AssistantModel) {
+        prefs.edit().putString(MODEL, model.id).apply()
+    }
+
     companion object {
+        private const val MODEL = "modelo"
         /** Nombre del archivo, para excluirlo de las copias de seguridad. */
         const val FILE = "asistente"
         private const val KEY = "clave_api"
