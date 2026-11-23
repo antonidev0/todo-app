@@ -12,7 +12,12 @@ object Splitter {
     /** Minutos que se suponen si una tarea no tiene estimación. */
     const val DEFAULT_MINUTES = 10
 
-    data class Item(val id: String, val title: String, val minutes: Int)
+    data class Item(
+        val id: String,
+        val title: String,
+        val minutes: Int,
+        val priority: Int = Priority.NORMAL,
+    )
 
     data class Share(val person: String, val items: List<Item>) {
         val totalMinutes: Int get() = items.sumOf { it.minutes }
@@ -31,9 +36,12 @@ object Splitter {
             totals[person] = totals.getValue(person) + item.minutes
         }
 
-        // Dentro de cada persona, las tareas en el mismo orden que la lista original.
+        // Dentro de cada persona: primero las de prioridad "Primero", al final las de
+        // "Al final", y entre medias el mismo orden que la lista original.
         val order = items.withIndex().associate { it.value.id to it.index }
-        return people.map { p -> Share(p, loads.getValue(p).sortedBy { order.getValue(it.id) }) }
+        return people.map { p ->
+            Share(p, loads.getValue(p).sortedWith(compareBy<Item>({ it.priority }, { order.getValue(it.id) })))
+        }
     }
 
     /** Mensaje para mandar al grupo, por ejemplo por WhatsApp. */

@@ -72,6 +72,26 @@ interface TaskDao {
     @Query("UPDATE tasks SET done = 0, completedAt = NULL, updatedAt = :now WHERE done = 1 AND id IN (:ids)")
     suspend fun markPending(ids: List<String>, now: Long)
 
+    /** Todas las tareas no borradas. Con pocas tareas, el filtrado por día se hace en Kotlin. */
+    @Query("SELECT * FROM tasks WHERE deletedAt IS NULL")
+    fun observeAll(): Flow<List<Task>>
+
+    @Query("SELECT * FROM tasks WHERE deletedAt IS NULL")
+    suspend fun getAll(): List<Task>
+
+    /** Días marcados como hechos desde [fromDate] ("2026-11-23") en adelante. */
+    @Query("SELECT * FROM completions WHERE date >= :fromDate")
+    fun observeCompletionsSince(fromDate: String): Flow<List<Completion>>
+
+    @Query("SELECT * FROM completions WHERE date = :date")
+    suspend fun getCompletionsOn(date: String): List<Completion>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCompletion(completion: Completion)
+
+    @Query("DELETE FROM completions WHERE taskId = :taskId AND date = :date")
+    suspend fun deleteCompletion(taskId: String, date: String)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(task: Task)
 

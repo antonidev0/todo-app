@@ -42,17 +42,54 @@ data class Task(
     val minutes: Int? = null,
     /** Persona que tiene que hacerla, o null si no está asignada. */
     val assignee: String? = null,
+    /** Orden dentro del día: [Priority.FIRST], [Priority.NORMAL] o [Priority.LAST]. */
+    @ColumnInfo(defaultValue = "1") val priority: Int = Priority.NORMAL,
+    /**
+     * Día de una tarea que no se repite, como "2026-11-23", o null si no tiene día.
+     * Las que se repiten usan [repeatDays] y dejan esto en null.
+     */
+    val date: String? = null,
     val position: Int = 0,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val deletedAt: Long? = null,
 )
 
-/** Una tarea junto con cuántas subtareas directas tiene y cuántas están hechas. */
 val Task.isRecurring: Boolean get() = repeatDays != 0 && reminderAt != null
 
+/** Una tarea junto con cuántas subtareas directas tiene y cuántas están hechas. */
 data class TaskWithCounts(
     @Embedded val task: Task,
     @ColumnInfo(name = "childCount") val childCount: Int,
     @ColumnInfo(name = "doneChildCount") val doneChildCount: Int,
+)
+
+/** Prioridad de una tarea dentro del día, aunque tenga hora. */
+object Priority {
+    const val FIRST = 0
+    const val NORMAL = 1
+    const val LAST = 2
+}
+
+/**
+ * Una tarea marcada como hecha en un día concreto. Se usa en las tareas que se
+ * repiten (y sus subtareas): hacerla el lunes no la marca para el martes.
+ */
+@Entity(tableName = "completions", primaryKeys = ["taskId", "date"])
+data class Completion(
+    val taskId: String,
+    /** Día en formato "2026-11-23". */
+    val date: String,
+    val completedAt: Long = System.currentTimeMillis(),
+)
+
+/** Lo que se rellena en el formulario de una tarea. */
+data class TaskForm(
+    val title: String,
+    val reminderAt: Long? = null,
+    val repeatDays: Int = 0,
+    val minutes: Int? = null,
+    val priority: Int = Priority.NORMAL,
+    /** Día de una tarea que no se repite ("2026-11-23"), o null. */
+    val date: String? = null,
 )

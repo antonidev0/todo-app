@@ -59,4 +59,15 @@ class SplitterTest {
         assertTrue(text.contains("👤 Ana (20 min)"))
         assertTrue(text.contains("• Recargar bebidas"))
     }
+
+    @Test
+    fun lasDeAlFinalVanLasUltimasEnCadaLista() {
+        val items = listOf(
+            Item("fregar", "Fregar el suelo", 10, com.example.todo_app.data.Priority.LAST),
+            Item("vasos", "Limpiar vasos", 10),
+            Item("caja", "Contar la caja", 10, com.example.todo_app.data.Priority.FIRST),
+        )
+        val share = Splitter.split(items, listOf("Antoni")).single()
+        assertEquals(listOf("caja", "vasos", "fregar"), share.items.map { it.id })
+    }
 }
