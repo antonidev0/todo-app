@@ -42,7 +42,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             TodoappTheme {
-                val vm: TaskViewModel = viewModel()
+                val vm: TaskViewModel = viewModel(factory = TaskViewModel.Factory)
                 TaskScreen(vm, topBanner = { PermissionBanner() })
             }
         }

@@ -13,7 +13,7 @@ import androidx.core.content.ContextCompat
 import com.example.todo_app.MainActivity
 import com.example.todo_app.R
 import com.example.todo_app.data.Task
-import com.example.todo_app.data.TaskRepository
+import com.example.todo_app.appContainer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -40,8 +40,8 @@ class ReminderReceiver : BroadcastReceiver() {
     }
 
     private suspend fun handle(context: Context, intent: Intent, taskId: String) {
-        val repo = TaskRepository(context)
-        val scheduler = ReminderScheduler(context)
+        val repo = context.appContainer.taskRepository
+        val scheduler = context.appContainer.reminderScheduler
 
         when (intent.action) {
             ACTION_SHOW -> {

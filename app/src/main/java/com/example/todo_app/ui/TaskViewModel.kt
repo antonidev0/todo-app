@@ -1,8 +1,12 @@
 package com.example.todo_app.ui
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import com.example.todo_app.appContainer
 import com.example.todo_app.data.Splitter
 import com.example.todo_app.data.Task
 import com.example.todo_app.data.TaskRepository
@@ -16,13 +20,15 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class TaskViewModel(app: Application) : AndroidViewModel(app) {
-
-    private val repo = TaskRepository(app)
+class TaskViewModel(
+    private val repo: TaskRepository,
+    private val teamStore: TeamStore,
+) : ViewModel() {
 
     /** Camino de tareas abiertas: vacío = lista principal; el último es el que se ve. */
     private val path = MutableStateFlow<List<String>>(emptyList())
@@ -38,9 +44,6 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
     val tasks: StateFlow<List<TaskWithCounts>> = path
         .flatMapLatest { p -> repo.observeChildren(p.lastOrNull()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    val depth: StateFlow<Int> = path.map { it.size }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
     fun open(task: Task) {
         path.value = path.value + task.id
@@ -63,11 +66,12 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Repartir el trabajo entre el equipo ----
 
-    private val teamStore = TeamStore(app)
-
-    /** Nombres guardados del equipo. */
-    private val _team = MutableStateFlow(teamStore.load())
-    val team: StateFlow<List<String>> = _team.asStateFlow()
+    /** Nombres guardados del equipo; null hasta que se leen del disco. */
+    private val _team = MutableStateFlow<List<String>?>(null)
+    val team: StateFlow<List<String>> = _team
+        .onStart { if (_team.value == null) _team.value = teamStore.load() }
+        .map { it.orEmpty() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Último reparto hecho, para enseñarlo en pantalla (null = nada que enseñar). */
     private val _split = MutableStateFlow<List<Splitter.Share>?>(null)
@@ -100,6 +104,16 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
             // Si estábamos dentro de la tarea borrada, salimos de ella.
             val i = path.value.indexOf(task.id)
             if (i >= 0) path.value = path.value.take(i)
+        }
+    }
+
+    companion object {
+        /** Crea el ViewModel con las piezas del [com.example.todo_app.AppContainer]. */
+        val Factory: ViewModelProvider.Factory = viewModelFactory {
+            initializer {
+                val container = checkNotNull(this[APPLICATION_KEY]).appContainer
+                TaskViewModel(container.taskRepository, container.teamStore)
+            }
         }
     }
 }
