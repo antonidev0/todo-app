@@ -32,6 +32,8 @@ data class TaskUiState(
     val split: List<Splitter.Share>? = null,
     /** Mensaje de error para enseñar una vez, o null. */
     val error: String? = null,
+    /** Aviso para enseñar una vez (por ejemplo, la tarea creada por voz), o null. */
+    val notice: Notice? = null,
 ) {
     val hasPendingTasks: Boolean get() = tasks.any { !it.done }
 
@@ -44,3 +46,6 @@ sealed interface TaskEditor {
     data object New : TaskEditor
     data class Edit(val task: Task) : TaskEditor
 }
+
+/** Un aviso con opción de deshacer: [undoTaskId] es la tarea que se borraría. */
+data class Notice(val text: String, val undoTaskId: String? = null)

@@ -22,6 +22,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.Assert.assertNotNull
 import java.time.LocalDate
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -44,7 +45,7 @@ class TaskViewModelTest {
     private val today = LocalDate.of(2026, 11, 23)
 
     private fun viewModel(saved: SavedStateHandle = SavedStateHandle()) =
-        TaskViewModel(repo, team, saved, clock = { today })
+        TaskViewModel(repo, team, saved, clock = { today }, now = { today.atTime(10, 0) })
 
     /** Tarea de hoy, para que salga en la lista del día. */
     private fun todayTask(id: String, title: String, minutes: Int? = null) =
@@ -206,5 +207,78 @@ class TaskViewModelTest {
         dao.insert(todayTask("a", "Solo una"))
         val state = observe(viewModel().uiState)
         assertFalse(state.value.askTeamToday)
+    }
+
+    // ---- Añadir hablando ----
+
+    @Test
+    fun porVozSinDiaVaAlDiaQueSeVe() = runTest {
+        val vm = viewModel()
+        val state = observe(vm.uiState)
+
+        vm.addFromVoice("recuérdame comprar pan")
+
+        val saved = dao.all.values.single()
+        assertEquals("Comprar pan", saved.title)
+        assertEquals(today.toString(), saved.date)
+        assertEquals(listOf("Comprar pan"), state.value.tasks.map { it.task.title })
+        assertEquals("Añadida «Comprar pan» · hoy", state.value.notice?.text)
+    }
+
+    @Test
+    fun porVozConDiaYSubtareasSeVaAEseDia() = runTest {
+        val vm = viewModel()
+        val state = observe(vm.uiState)
+
+        vm.addFromVoice("hacer la compra mañana a las 9: pan y leche")
+
+        val parent = dao.all.values.single { it.parentId == null }
+        assertEquals("Hacer la compra", parent.title)
+        assertEquals(today.plusDays(1).toString(), parent.date)
+        assertNotNull(parent.reminderAt)
+        assertEquals(listOf("Pan", "Leche"), dao.all.values.filter { it.parentId == parent.id }.sortedBy { it.position }.map { it.title })
+        assertEquals(today.plusDays(1), state.value.selectedDate)
+        assertEquals("Añadida «Hacer la compra» · mañana a las 09:00 · 2 subtareas", state.value.notice?.text)
+        assertTrue(parent.id in alarms.scheduled.map { it.id })
+    }
+
+    @Test
+    fun porVozDentroDeUnaTareaCreaUnaSubtarea() = runTest {
+        val padre = todayTask("padre", "Cierre")
+        dao.insert(padre)
+        val vm = viewModel()
+        val state = observe(vm.uiState)
+        vm.open(padre)
+
+        vm.addFromVoice("mañana barrer la terraza")
+
+        val child = dao.all.values.single { it.parentId == "padre" }
+        assertEquals("Barrer la terraza", child.title)
+        assertNull(child.date)
+        assertEquals(listOf("Barrer la terraza"), state.value.tasks.map { it.task.title })
+    }
+
+    @Test
+    fun deshacerLoDichoPorVozLoBorra() = runTest {
+        val vm = viewModel()
+        val state = observe(vm.uiState)
+        vm.addFromVoice("llamar a Luis")
+
+        vm.undoVoice(checkNotNull(state.value.notice?.undoTaskId))
+        vm.noticeShown()
+
+        assertTrue(state.value.tasks.isEmpty())
+        assertNull(state.value.notice)
+    }
+
+    @Test
+    fun siNoSeEntiendeNadaAvisa() = runTest {
+        val vm = viewModel()
+        val state = observe(vm.uiState)
+
+        vm.addFromVoice("mañana a las 9")
+
+        assertTrue(dao.all.isEmpty())
+        assertEquals("No he entendido qué añadir: «mañana a las 9»", state.value.error)
     }
 }

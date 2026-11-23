@@ -1,6 +1,11 @@
 package com.example.todo_app.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.speech.RecognizerIntent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,6 +26,9 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -38,6 +46,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -49,11 +59,30 @@ import com.example.todo_app.data.Priority
 import com.example.todo_app.data.TaskForm
 import com.example.todo_app.ui.theme.TodoappTheme
 import java.time.LocalDate
+import java.util.Locale
 
 /** Une la pantalla con el ViewModel. Toda la interfaz está en [TaskContent]. */
 @Composable
 fun TaskScreen(vm: TaskViewModel, topBanner: @Composable () -> Unit = {}) {
     val state by vm.uiState.collectAsStateWithLifecycle()
+
+    // El reconocimiento de voz del móvil (normalmente el de Google): escucha y devuelve el texto.
+    val voice = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val spoken = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+        if (!spoken.isNullOrBlank()) vm.addFromVoice(spoken)
+    }
+    val listen = {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, speechLanguage())
+            .putExtra(RecognizerIntent.EXTRA_PROMPT, if (state.canGoBack) "¿Qué subtarea añado?" else "¿Qué tarea añado?")
+        try {
+            voice.launch(intent)
+        } catch (e: ActivityNotFoundException) {
+            vm.showError("Este móvil no tiene reconocimiento de voz. Instala o activa la app de Google.")
+        }
+    }
+
     TaskContent(
         state = state,
         topBanner = topBanner,
@@ -72,7 +101,16 @@ fun TaskScreen(vm: TaskViewModel, topBanner: @Composable () -> Unit = {}) {
         onSkipTeamToday = vm::skipTeamToday,
         onCloseSplit = vm::closeSplit,
         onErrorShown = vm::errorShown,
+        onVoice = listen,
+        onUndo = vm::undoVoice,
+        onNoticeShown = vm::noticeShown,
     )
+}
+
+/** El idioma del móvil si es español (es-ES, es-MX...); si no, español de España. */
+private fun speechLanguage(): String {
+    val locale = Locale.getDefault()
+    return if (locale.language == "es") locale.toLanguageTag() else "es-ES"
 }
 
 /**
@@ -96,6 +134,10 @@ fun TaskContent(
     onCloseSplit: () -> Unit,
     onErrorShown: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Pulsar el micrófono para añadir hablando. */
+    onVoice: () -> Unit = {},
+    onUndo: (taskId: String) -> Unit = {},
+    onNoticeShown: () -> Unit = {},
     topBanner: @Composable () -> Unit = {},
 ) {
     var editing by remember { mutableStateOf<TaskEditor?>(null) }
@@ -108,6 +150,19 @@ fun TaskContent(
         state.error?.let {
             snackbar.showSnackbar(it)
             onErrorShown()
+        }
+    }
+
+    // Enseña cada aviso una vez, con «Deshacer» si se puede.
+    LaunchedEffect(state.notice) {
+        state.notice?.let { notice ->
+            val result = snackbar.showSnackbar(
+                message = notice.text,
+                actionLabel = if (notice.undoTaskId != null) "Deshacer" else null,
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) notice.undoTaskId?.let(onUndo)
+            onNoticeShown()
         }
     }
 
@@ -138,8 +193,19 @@ fun TaskContent(
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(onClick = { editing = TaskEditor.New }) {
-                Text(if (state.canGoBack) "+ Subtarea" else "+ Tarea")
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                SmallFloatingActionButton(
+                    onClick = onVoice,
+                    modifier = Modifier.semantics { contentDescription = "Añadir hablando" },
+                ) {
+                    Text("🎤", style = MaterialTheme.typography.titleMedium)
+                }
+                ExtendedFloatingActionButton(onClick = { editing = TaskEditor.New }) {
+                    Text(if (state.canGoBack) "+ Subtarea" else "+ Tarea")
+                }
             }
         },
     ) { padding ->
@@ -161,7 +227,7 @@ fun TaskContent(
                         text = when {
                             state.canGoBack -> "Esta tarea no tiene subtareas.\nPulsa «+ Subtarea» para añadir una."
                             state.selectedDate == null -> "No hay tareas sin día."
-                            else -> "No hay tareas este día.\nPulsa «+ Tarea» para añadir una."
+                            else -> "No hay tareas este día.\nPulsa «+ Tarea» o 🎤 para añadir una."
                         },
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
