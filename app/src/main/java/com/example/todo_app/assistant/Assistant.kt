@@ -25,10 +25,11 @@ enum class Provider(
     /** Dónde se consigue la clave. */
     val keyUrl: String,
     /** Cómo empiezan sus claves, para avisar si se pega otra cosa. */
-    val keyPrefix: String,
+    val keyPrefixes: List<String>,
 ) {
-    GEMINI("Google Gemini", "https://aistudio.google.com/apikey", "AIza"),
-    CLAUDE("Anthropic Claude", "https://console.anthropic.com/settings/keys", "sk-ant-"),
+    /** Google da ahora claves «AQ.»; las antiguas «AIza» siguen valiendo. */
+    GEMINI("Google Gemini", "https://aistudio.google.com/apikey", listOf("AQ.", "AIza")),
+    CLAUDE("Anthropic Claude", "https://console.anthropic.com/settings/keys", listOf("sk-ant-")),
 }
 
 /** Los modelos que se pueden elegir en los ajustes. Los de Gemini son gratis (con límite diario). */

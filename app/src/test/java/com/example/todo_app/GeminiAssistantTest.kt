@@ -34,7 +34,7 @@ class GeminiAssistantTest {
 
     private fun assistant(vararg replies: HttpResult, model: AssistantModel = AssistantModel.GEMINI_FLASH): GeminiAssistant {
         val queue = ArrayDeque(replies.toList())
-        return GeminiAssistant("AIza-prueba", tools, model, { url, key, body ->
+        return GeminiAssistant("AQ.prueba", tools, model, { url, key, body ->
             sent += Sent(url, key, body)
             queue.removeFirst()
         }, { now }, Dispatchers.Unconfined)
@@ -53,7 +53,7 @@ class GeminiAssistantTest {
         assertTrue(r.changedTasks)
         assertEquals("Comprar pan", dao.all.values.single().title)
         assertTrue(sent[0].url.endsWith("/models/gemini-3.5-flash:generateContent"))
-        assertEquals("AIza-prueba", sent[0].key)
+        assertEquals("AQ.prueba", sent[0].key)
 
         val first = json.readTree(sent[0].body)
         assertTrue(first.path("contents").path(0).toString().contains("lunes 23 de noviembre de 2026"))
