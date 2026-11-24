@@ -125,7 +125,8 @@ class GeminiAssistant(
                     "prueba mañana o cambia a ${AssistantModel.GEMINI_LITE.label} en los ajustes (⚙)."
             e is GeminiError && (e.message.contains("API key", ignoreCase = true) || e.status == "UNAUTHENTICATED" ||
                 e.code == 401 || e.code == 403) ->
-                "La clave de Google no es válida. Revísala en los ajustes del asistente (⚙)."
+                "La clave de Google no es válida. Revísala en los ajustes del asistente (⚙)." +
+                    (if (e.message.isNotEmpty()) " (Google dice: ${e.message})" else "")
             e is GeminiError && e.message.contains("location", ignoreCase = true) ->
                 "Google no ofrece Gemini gratis desde tu país. Prueba con Claude en los ajustes (⚙)."
             e is GeminiError && e.code >= 500 -> "Gemini está saturado ahora mismo. Prueba otra vez en un momento."

@@ -296,12 +296,12 @@ private fun KeySetup(
         OutlinedTextField(
             value = key,
             onValueChange = { key = it.trim() },
-            label = { Text("Clave (empieza por ${provider.keyPrefix})") },
+            label = { Text("Clave (empieza por ${provider.keyPrefixes.joinToString(" o ")})") },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth(),
         )
-        Button(onClick = { onSaveKey(key) }, enabled = key.startsWith(provider.keyPrefix)) { Text("Guardar") }
+        Button(onClick = { onSaveKey(key) }, enabled = provider.keyPrefixes.any { key.startsWith(it) }) { Text("Guardar") }
     }
 }
 
